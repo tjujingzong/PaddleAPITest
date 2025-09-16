@@ -31,7 +31,7 @@
    ```
 3. 确保 `engineV2.py` 、 `log_writer.py` 和 `run.sh` 路径正确
 
-> [!CAUTION]
+> [!CAUTION] CAUTION 1
 > 目前 engineV2 仅支持 ***python>=3.10***，如报错 *`NameError: name 'torch' is not defined`*，请在 `run_test_case()` 函数首行手动添加导入语句：
 > ```python
 > import torch
@@ -45,6 +45,14 @@
 > 在 Python 3.10 之前的版本中，当子进程的执行函数（如 `run_test_case`）在主进程中被定义并通过序列化传递到子进程时，该函数会试图在其原始定义时的全局命名空间（即主进程的全局命名空间）中寻找依赖项（如 `torch`），而不是在当前执行时的全局命名空间（即已经通过 `init_worker_gpu` 初始化过的子进程命名空间）中寻找
 > 
 > 由于 gpu 隔离的需求，主进程并没有导入 `torch` 和 `paddle`，所以当 `run_test_case` 在子进程中被反序列化并准备执行时，它找不到这些库，从而引发 `NameError`
+
+> [!CAUTION] CAUTION 2
+> 在更高 CUDA 版本下，比如 CUDA Version: 12.9，可能会出现以下报错：
+> ```bash
+> ImportError: /usr/local/cuda/lib64/libcusparse.so.12: undefined symbol: __nvJitLinkGetErrorLogSize_12_9, version libnvJitLink.so.12
+> ```
+> 
+> 解决方案是在 `init_worker_gpu()` 函数中交换 `torch` 和 `paddle` 的导入顺序，将 `torch` 置于 `paddle` 之前，具体原因未知
 
 ## 使用指南
 

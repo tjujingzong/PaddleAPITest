@@ -1691,10 +1691,10 @@ elif isinstance(shape, (list, tuple)):
             size_list.append(s)
 """
         core = """
-if len(size_list) == 0:
-    result = torch.empty([], dtype=dtype)
+if "dtype" in locals():
+    result = torch.empty(size_list, dtype=dtype)
 else:
-    result = torch.empty(*size_list, dtype=dtype)
+    result = torch.empty(size_list)
 """
         code = Code(preprocess=pre.splitlines(), core=core.splitlines())
         return ConvertResult.success(paddle_api, code)

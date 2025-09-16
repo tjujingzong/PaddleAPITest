@@ -218,48 +218,7 @@ class APITestAccuracy(APITestBase):
             write_to_log("paddle_error", self.api_config.config)
             raise
 
-        if self.api_config.api_name == "paddle.incubate.nn.functional.fused_rms_norm":
-            paddle_output = paddle_output[0]
-        elif self.api_config.api_name == "paddle.unique":
-            if "return_index=True" in self.api_config.config:
-                paddle_output = list(paddle_output)
-                paddle_output.pop(1)
-            paddle_output = tuple(paddle_output)
-        elif self.api_config.api_name in {
-            "paddle.mode",
-            "paddle.Tensor.mode",
-            "paddle.incubate.nn.functional.fused_layer_norm",
-            "paddle.kthvalue",
-            "paddle.Tensor.kthvalue",
-            "paddle.topk",
-        }:
-            paddle_output = paddle_output[0]
-            torch_output = torch_output[0]
-        elif self.api_config.api_name in {
-            "paddle.strided_slice",
-            "paddle.vander",
-        } and any(s < 0 for s in paddle_output.strides):
-            # torch's from_dlpack now don't support negative strides
-            paddle_output = paddle_output.contiguous()
-        elif self.api_config.api_name == "paddle.linalg.eigh":
-            # The output of eigen vectors are not unique, because multiplying an eigen vector by -1 in the real case
-            # or by e^(i*\theta) in the complex case produces another set of valid eigen vectors of the matrix.
-            # So we test whether the elements of each coef_vector (i.e. paddle_output / torch_output for each eigen vector)
-            # are all the same and whether the |coef| == 1 for simplicity.
-            paddle_output, torch_output = list(paddle_output), list(torch_output)
-            eigvector_len = paddle_output[1].shape[-2]
-            paddle_eigvectors = paddle_output.pop(1).matrix_transpose().reshape([-1, eigvector_len])
-            torch_eigvectors = torch_output.pop(1).transpose(-1, -2).reshape((-1, eigvector_len))
-            paddle_output, torch_output = [], []
-            for i in range(paddle_eigvectors.shape[0]):
-                coef_vector = paddle.to_tensor(paddle_eigvectors[i].numpy()/torch_eigvectors[i].numpy(), dtype=paddle_eigvectors[i].dtype)
-                coef_vector = coef_vector.round(2)
-                coef_0 = paddle_eigvectors[i].numpy()[0]/torch_eigvectors[i].numpy()[0]
-                coef_vector_approx = torch.tensor([coef_0] * eigvector_len)
-                abs_coef = coef_vector.abs().astype("float64")[0]
-                one = torch.tensor(1.0, dtype=torch.float64)
-                paddle_output.append([coef_vector, abs_coef])
-                torch_output.append([coef_vector_approx, one])
+        paddle_output, torch_output = process_output(self.api_config, paddle_output, torch_output)
 
         self.is_backward = False
         def compare_paddle_and_torch(paddle_tensor, torch_tensor) -> bool:
@@ -369,48 +328,7 @@ class APITestAccuracy(APITestBase):
                 write_to_log("paddle_error", self.api_config.config)
                 raise
 
-            if self.api_config.api_name == "paddle.Tensor.__setitem__":
-                torch_out_grads = torch_out_grads[0]
-                paddle_out_grads = paddle_out_grads[0]
-
-            # All configs that not compared with torch should be copied
-            # to tester/api_config/5_accuracy/accuracy_gpu_error_grads_diff.txt
-            if self.api_config.api_name in {
-                "paddle.nn.functional.scaled_dot_product_attention",
-            }:
-                paddle_out_grads = paddle_out_grads[:3]
-                torch_out_grads = torch_out_grads[:3]
-            elif self.api_config.api_name in {
-                "paddle.lerp",
-                "paddle.tensordot",
-            }:
-                paddle_out_grads = paddle_out_grads[:2]
-                torch_out_grads = torch_out_grads[:2]
-            elif self.api_config.api_name in {
-                "paddle.Tensor.fill_diagonal_tensor",
-                "paddle.diagonal_scatter",
-                "paddle.incubate.softmax_mask_fuse",
-                "paddle.nn.functional.binary_cross_entropy",
-                "paddle.nn.functional.binary_cross_entropy_with_logits",
-                "paddle.nn.functional.cross_entropy",
-                "paddle.nn.functional.sigmoid_focal_loss",
-                "paddle.nn.functional.gaussian_nll_loss",
-                "paddle.nn.functional.kl_div",
-                "paddle.scale",
-            }:
-                paddle_out_grads = paddle_out_grads[:1]
-                torch_out_grads = torch_out_grads[:1]
-            elif self.api_config.api_name in {
-                "paddle.combinations",
-                "paddle.nn.utils.parameters_to_vector",
-                "paddle.cdist",
-            }:
-                paddle_out_grads = []
-                torch_out_grads = []
-            elif self.api_config.api_name == "paddle.linalg.cholesky_solve":
-                from .base import get_arg
-                is_upper = get_arg(self.api_config, 2, 'upper', default=False)
-                torch_out_grads[1] = torch.triu(torch_out_grads[1]) if is_upper else torch.tril(torch_out_grads[1])
+            paddle_out_grads, torch_out_grads = process_grad_output(self.api_config, paddle_out_grads, torch_out_grads)
 
             if isinstance(paddle_out_grads, paddle.Tensor):
                 if isinstance(torch_out_grads, torch.Tensor):
@@ -447,3 +365,106 @@ class APITestAccuracy(APITestBase):
 
         print("[Pass]", self.api_config.config, flush=True)
         write_to_log("pass", self.api_config.config)
+
+
+def process_output(api_config, paddle_output, torch_output):
+    if api_config.api_name == "paddle.unique":
+        if "return_index=True" in api_config.config:
+            paddle_output = list(paddle_output)
+            paddle_output.pop(1)
+    elif api_config.api_name in {
+        "paddle.mode",
+        "paddle.Tensor.mode",
+        "paddle.incubate.nn.functional.fused_layer_norm",
+        "paddle.incubate.nn.functional.fused_rms_norm",
+        "paddle.kthvalue",
+        "paddle.Tensor.kthvalue",
+        "paddle.topk",
+    }:
+        paddle_output = paddle_output[:1]
+        torch_output = torch_output[:1]
+    elif api_config.api_name in {
+        "paddle.strided_slice",
+        "paddle.vander",
+    }:
+        if any(s < 0 for s in paddle_output.strides):
+            # torch's from_dlpack now don't support negative strides
+            paddle_output = paddle_output.contiguous()
+    elif api_config.api_name == "paddle.linalg.eigh":
+        # The output of eigen vectors are not unique, because multiplying an eigen vector by -1 in the real case
+        # or by e^(i*\theta) in the complex case produces another set of valid eigen vectors of the matrix.
+        # So we test whether the elements of each coef_vector (i.e. paddle_output / torch_output for each eigen vector)
+        # are all the same and whether the |coef| == 1 for simplicity.
+        paddle_output, torch_output = list(paddle_output), list(torch_output)
+        eigvector_len = paddle_output[1].shape[-2]
+        paddle_eigvectors = (
+            paddle_output.pop(1).matrix_transpose().reshape([-1, eigvector_len])
+        )
+        torch_eigvectors = (
+            torch_output.pop(1).transpose(-1, -2).reshape((-1, eigvector_len))
+        )
+        paddle_output, torch_output = [], []
+        for i in range(paddle_eigvectors.shape[0]):
+            coef_vector = paddle.to_tensor(
+                paddle_eigvectors[i].numpy() / torch_eigvectors[i].numpy(),
+                dtype=paddle_eigvectors[i].dtype,
+            )
+            coef_vector = coef_vector.round(2)
+            coef_0 = paddle_eigvectors[i].numpy()[0] / torch_eigvectors[i].numpy()[0]
+            coef_vector_approx = torch.tensor([coef_0] * eigvector_len)
+            abs_coef = coef_vector.abs().astype("float64")[0]
+            one = torch.tensor(1.0, dtype=torch.float64)
+            paddle_output.append([coef_vector, abs_coef])
+            torch_output.append([coef_vector_approx, one])
+    return paddle_output, torch_output
+
+
+def process_grad_output(api_config, paddle_out_grads, torch_out_grads):
+    # All configs that not compared with torch should be copied
+    # to tester/api_config/5_accuracy/accuracy_gpu_error_grads_diff.txt
+    if api_config.api_name in {
+        "paddle.nn.functional.scaled_dot_product_attention",
+    }:
+        paddle_out_grads = paddle_out_grads[:3]
+        torch_out_grads = torch_out_grads[:3]
+    elif api_config.api_name in {
+        "paddle.lerp",
+        "paddle.tensordot",
+    }:
+        paddle_out_grads = paddle_out_grads[:2]
+        torch_out_grads = torch_out_grads[:2]
+    elif api_config.api_name in {
+        "paddle.Tensor.__setitem__",
+        "paddle.Tensor.fill_diagonal_tensor",
+        "paddle.diagonal_scatter",
+        "paddle.incubate.softmax_mask_fuse",
+        "paddle.nn.functional.binary_cross_entropy",
+        "paddle.nn.functional.binary_cross_entropy_with_logits",
+        "paddle.nn.functional.cross_entropy",
+        "paddle.nn.functional.gaussian_nll_loss",
+        "paddle.nn.functional.kl_div",
+        "paddle.nn.functional.sigmoid_focal_loss",
+        "paddle.scale",
+    }:
+        paddle_out_grads = paddle_out_grads[:1]
+        torch_out_grads = torch_out_grads[:1]
+    elif api_config.api_name in {
+        "paddle.combinations",
+        "paddle.nn.utils.parameters_to_vector",
+        "paddle.cdist",
+    }:
+        paddle_out_grads = []
+        torch_out_grads = []
+    elif api_config.api_name == "paddle.linalg.cholesky_solve":
+        if len(api_config.args) > 2:
+            is_upper = api_config.args[2]
+        elif "is_upper" in api_config.kwargs:
+            is_upper = api_config.kwargs["is_upper"]
+        else:
+            is_upper = False
+        torch_out_grads[1] = (
+            torch.triu(torch_out_grads[1])
+            if is_upper
+            else torch.tril(torch_out_grads[1])
+        )
+    return paddle_out_grads, torch_out_grads

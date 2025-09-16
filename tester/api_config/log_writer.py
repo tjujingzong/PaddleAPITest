@@ -22,6 +22,7 @@ LOG_PREFIXES = {
     "torch_error": "api_config_torch_error",
     "paddle_to_torch_failed": "api_config_paddle_to_torch_failed",
     "accuracy_error": "api_config_accuracy_error",
+    "accuracy_diff": "api_config_accuracy_diff",
     "timeout": "api_config_timeout",
     "crash": "api_config_crash",
     "oom": "api_config_oom",

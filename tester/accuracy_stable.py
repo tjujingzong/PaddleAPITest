@@ -7,6 +7,7 @@ import numpy
 from .api_config.log_writer import log_accuracy_stable, write_to_log
 from .base import APITestBase
 from .paddle_to_torch import get_converter
+from .accuracy import process_output, process_grad_output
 
 
 cuda_errors = frozenset(
@@ -94,10 +95,11 @@ class APITestAccuracyStable(APITestBase):
             paddle.device.cuda.empty_cache()
 
             # ======== format ========
-            torch_output, torch_out_grads, paddle_output, paddle_out_grads = (
-                self.format_output(
-                    torch_output, torch_out_grads, paddle_output, paddle_out_grads
-                )
+            paddle_output, torch_output = process_output(
+                self.api_config, paddle_output, torch_output
+            )
+            paddle_out_grads, torch_out_grads = process_grad_output(
+                self.api_config, paddle_out_grads, torch_out_grads
             )
 
             # ======== add to pair ========
@@ -348,101 +350,6 @@ class APITestAccuracyStable(APITestBase):
         paddle_out_grads = process_paddle_outputs(paddle_out_grads)
         return paddle_output, paddle_out_grads
 
-    def format_output(
-        self, paddle_output, torch_output, paddle_out_grads, torch_out_grads
-    ):
-        # ======== format output ========
-        if self.api_config.api_name == "paddle.incubate.nn.functional.fused_rms_norm":
-            paddle_output = paddle_output[0]
-        elif self.api_config.api_name == "paddle.unique":
-            if "return_index=True" in self.api_config.config:
-                paddle_output = list(paddle_output)
-                paddle_output.pop(1)
-            paddle_output = tuple(paddle_output)
-        elif self.api_config.api_name in {
-            "paddle.mode",
-            "paddle.Tensor.mode",
-            "paddle.incubate.nn.functional.fused_layer_norm",
-            "paddle.kthvalue",
-        }:
-            paddle_output = paddle_output[0]
-            torch_output = torch_output[0]
-        elif self.api_config.api_name in {
-            "paddle.strided_slice",
-            "paddle.vander",
-        } and any(s < 0 for s in paddle_output.strides):
-            # torch's from_dlpack now don't support negative strides
-            paddle_output = paddle_output.contiguous()
-        elif self.api_config.api_name == "paddle.linalg.eigh":
-            # The output of eigen vectors are not unique, because multiplying an eigen vector by -1 in the real case
-            # or by e^(i*\theta) in the complex case produces another set of valid eigen vectors of the matrix.
-            # So we test whether the elements of each coef_vector (i.e. paddle_output / torch_output for each eigen vector)
-            # are all the same and whether the |coef| == 1 for simplicity.
-            paddle_output, torch_output = list(paddle_output), list(torch_output)
-            eigvector_len = paddle_output[1].shape[-2]
-            paddle_eigvectors = (
-                paddle_output.pop(1).matrix_transpose().reshape([-1, eigvector_len])
-            )
-            torch_eigvectors = (
-                torch_output.pop(1).transpose(-1, -2).reshape((-1, eigvector_len))
-            )
-            paddle_output, torch_output = [], []
-            for i in range(paddle_eigvectors.shape[0]):
-                coef_vector = paddle.to_tensor(
-                    paddle_eigvectors[i].numpy() / torch_eigvectors[i].numpy(),
-                    dtype=paddle_eigvectors[i].dtype,
-                )
-                coef_vector = coef_vector.round(2)
-                coef_0 = (
-                    paddle_eigvectors[i].numpy()[0] / torch_eigvectors[i].numpy()[0]
-                )
-                coef_vector_approx = torch.tensor([coef_0] * eigvector_len)
-                abs_coef = coef_vector.abs().astype("float64")[0]
-                one = torch.tensor(1.0, dtype=torch.float64)
-                paddle_output.append([coef_vector, abs_coef])
-                torch_output.append([coef_vector_approx, one])
-
-        # ======== format gradient ========
-        if self.api_config.api_name == "paddle.Tensor.__setitem__":
-            torch_out_grads = torch_out_grads[0]
-            paddle_out_grads = paddle_out_grads[0]
-        # All configs that not compared with torch should be copied
-        # to tester/api_config/5_accuracy/accuracy_gpu_error_grads_diff.txt
-        if self.api_config.api_name in {
-            "paddle.nn.functional.scaled_dot_product_attention",
-        }:
-            paddle_out_grads = paddle_out_grads[:3]
-            torch_out_grads = torch_out_grads[:3]
-        elif self.api_config.api_name in {
-            "paddle.lerp",
-            "paddle.tensordot",
-        }:
-            paddle_out_grads = paddle_out_grads[:2]
-            torch_out_grads = torch_out_grads[:2]
-        elif self.api_config.api_name in {
-            "paddle.Tensor.fill_diagonal_tensor",
-            "paddle.diagonal_scatter",
-            "paddle.incubate.softmax_mask_fuse",
-            "paddle.nn.functional.binary_cross_entropy",
-            "paddle.nn.functional.binary_cross_entropy_with_logits",
-            "paddle.nn.functional.cross_entropy",
-            "paddle.nn.functional.sigmoid_focal_loss",
-            "paddle.nn.functional.gaussian_nll_loss",
-            "paddle.nn.functional.kl_div",
-            "paddle.scale",
-        }:
-            paddle_out_grads = paddle_out_grads[:1]
-            torch_out_grads = torch_out_grads[:1]
-        elif self.api_config.api_name in {
-            "paddle.combinations",
-            "paddle.nn.utils.parameters_to_vector",
-            "paddle.cdist",
-        }:
-            paddle_out_grads = []
-            torch_out_grads = []
-
-        return paddle_output, torch_output, paddle_out_grads, torch_out_grads
-
     def compare(self, input1, input2, comp):
         if isinstance(input1, (paddle.Tensor, torch.Tensor)):
             if isinstance(input2, (paddle.Tensor, torch.Tensor)):
@@ -481,12 +388,12 @@ class APITestAccuracyStable(APITestBase):
                 )
                 write_to_log("accuracy_error", self.api_config.config)
                 return
-            for item1, item2 in zip(input1, input2):
+            for idx, (item1, item2) in enumerate(zip(input1, input2)):
                 if isinstance(item1, (paddle.Tensor, torch.Tensor)) and isinstance(
                     item2, (paddle.Tensor, torch.Tensor)
                 ):
                     try:
-                        self.assert_accuracy(item1, item2, comp)
+                        self.assert_accuracy(item1, item2, comp, idx)
                     except Exception as err:
                         print(
                             f"[{comp}] [accuracy error] {self.api_config.config}\n{str(err)}",
@@ -499,7 +406,7 @@ class APITestAccuracyStable(APITestBase):
                 ) and not isinstance(item2, (paddle.Tensor, torch.Tensor)):
                     try:
                         self.assert_accuracy(
-                            torch.tensor(item1), torch.tensor(item2), comp
+                            torch.tensor(item1), torch.tensor(item2), comp, idx
                         )
                     except Exception as err:
                         print(
@@ -527,7 +434,7 @@ class APITestAccuracyStable(APITestBase):
                 write_to_log("accuracy_error", self.api_config.config)
                 return
 
-    def assert_accuracy(self, tensor1, tensor2, comp):
+    def assert_accuracy(self, tensor1, tensor2, comp, idx=0):
         if not tensor1.is_contiguous():
             tensor1 = tensor1.contiguous()
         if not tensor2.is_contiguous():
@@ -619,5 +526,6 @@ class APITestAccuracyStable(APITestBase):
                     dtype,
                     comp,
                 )
+                write_to_log("accuracy_diff", config)
             else:
                 raise
