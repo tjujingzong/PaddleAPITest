@@ -1,60 +1,97 @@
-import os
+# 召回配置小工具
+# @author: cangtianhuang
+# @date: 2025-09-26
+
+from pathlib import Path
 import re
 import argparse
 
 
-def search_files(directory, keywords, output_file):
-    pattern = re.compile("|".join(rf"^[^(\n]*{re.escape(kw)}[^(\n]*\(" for kw in keywords))
+def collect_input_files(input_paths):
+    files = []
+    for input_path in input_paths:
+        path = Path(input_path)
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            text_files = list(path.rglob("*.txt"))
+            files.extend(text_files)
+    return files
+
+
+def search_files(input_paths, keywords, output_file):
+    input_files = collect_input_files(input_paths)
+    if not input_files:
+        print("No valid input files found")
+        return
+
+    pattern = re.compile(
+        "|".join(rf"^[^(\n]*{re.escape(kw)}[^(\n]*\(" for kw in keywords)
+    )
 
     configs = set()
     prefixes = set()
     count = 0
 
-    for root, _, files in os.walk(directory):
-        for file in files:
-            file_path = os.path.join(root, file)
-            print(f"Retrieving from {file}...")
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if pattern.search(line):
-                            count += 1
-                            configs.add(line.strip())
-                            prefix = line[: line.index("(")].strip()
-                            prefixes.add(prefix)
-            except (UnicodeDecodeError, PermissionError) as e:
-                print(f"Error reading {file_path}: {e}")
-                continue
+    for input_file in input_files:
+        print(f"Retrieving from {input_file.name}...")
+        try:
+            content = input_file.read_text(encoding="utf-8")
+            for line in content.splitlines():
+                line = line.rstrip("\n\r")
+                if match := pattern.search(line):
+                    count += 1
+                    configs.add(line)
+                    paren_pos = line.find("(", match.start())
+                    if paren_pos != -1:
+                        prefixes.add(line[:paren_pos].strip())
+        except (UnicodeDecodeError, PermissionError) as e:
+            print(f"Error reading {input_file}: {e}")
+            continue
+
     print(f"Retrieved {count} configs")
     print(f"Get {len(configs)} unique configs")
     print(f"APIs: {sorted(prefixes)}")
 
-    with open(output_file, "w", encoding="utf-8") as out_f:
-        for line in sorted(configs):
-            out_f.write(f"{line}\n")
+    Path(output_file).write_text("\n".join(sorted(configs)) + "\n", encoding="utf-8")
     print(f"Saved to {output_file}")
 
 
-if __name__ == "__main__":
-    default_directory = "tester/api_config/5_accuracy"
+def main():
+    default_input = ["tester/api_config/5_accuracy"]
     default_keywords = []
     default_output = "tester/api_config/api_config_retrieved.txt"
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--directory",
-        default=default_directory,
+    parser = argparse.ArgumentParser(
+        description="配置文件召回工具",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog="""
+使用示例:
+  python %(prog)s -k matmul linear  # 模糊搜索
+  python %(prog)s -k paddle.matmul  # 精确搜索
+""",
     )
-    parser.add_argument("--keywords", nargs="+", default=default_keywords)
     parser.add_argument(
-        "--output",
-        default=default_output,
+        "--input",
+        "-i",
+        nargs="+",
+        default=default_input,
+        help="输入路径列表（支持文件或目录）",
     )
+    parser.add_argument(
+        "--keywords",
+        "-k",
+        nargs="+",
+        required=True,
+        default=default_keywords,
+        help="关键词列表",
+    )
+    parser.add_argument("--output", "-o", default=default_output, help="输出文件路径")
+
     args = parser.parse_args()
 
-    if not os.path.isdir(args.directory):
-        print(f"Error: Directory {args.directory} does not exist")
-    elif not args.keywords:
-        print("Error: Please provide at least one keyword")
-    else:
-        search_files(args.directory, args.keywords, args.output)
+    search_files(args.input, args.keywords, args.output)
+
+
+if __name__ == "__main__":
+    main()
