@@ -268,7 +268,6 @@ class APITestBase:
             )
         return indices_flat.reshape(item_shape)
 
-
     def _generate_constrained_bool_mask(self, shape, num_true):
         mask_size = numpy.prod(shape).item()
         if mask_size < num_true:
@@ -282,7 +281,7 @@ class APITestBase:
 
     def _broadcast_or_raise(self, shapes):
         return numpy.broadcast_shapes(*[tuple(s) for s in shapes])
-    
+
     def _handle_indices_arg(self, config_items, is_tuple=False):
         x = (
             self.paddle_args_config[0]
@@ -544,23 +543,21 @@ class APITestBase:
         result_outputs = []
         if isinstance(outputs, paddle.Tensor):
             result_outputs.append(outputs)
-        elif isinstance(outputs, list) and len(outputs) > 0 and isinstance(outputs[0], paddle.Tensor):
-            for output in outputs:
-                if (output is not None) and (not isinstance(output, paddle.Tensor) or output.size != 0):
-                    result_outputs.append(output)
+        elif isinstance(outputs, list):
+            result_outputs = [output for output in outputs if isinstance(output, paddle.Tensor) and output._is_initialized()]
         elif isinstance(outputs, paddle.autograd.autograd.Hessian) or \
                 isinstance(outputs, paddle.autograd.autograd.Jacobian):
             result_outputs.append(outputs[:])
         elif isinstance(outputs, tuple):
             for output in outputs:
-                if isinstance(output, paddle.Tensor) and output.size != 0:
+                if output is None or (isinstance(output, paddle.Tensor) and not output._is_initialized()):
+                    continue
+                elif isinstance(output, paddle.Tensor):
                     result_outputs.append(output)
                 elif isinstance(output, list):
                     for item in output:
                         if isinstance(item, paddle.Tensor):
                             result_outputs.append(item)
-                    else:
-                        raise ValueError("outputs format not support")
                 elif isinstance(output, paddle.autograd.autograd.Hessian) or \
                         isinstance(output, paddle.autograd.autograd.Jacobian):
                     result_outputs.extend(output[:])
@@ -569,20 +566,12 @@ class APITestBase:
                         isinstance(output[0], paddle.autograd.autograd.Jacobian)):
                     for lazy_obj in output:
                         result_outputs.append(lazy_obj[:])
-                elif output is None or output.size == 0:
-                    continue
                 else:
                     raise ValueError("outputs format not support")
-                # elif isinstance(output, list) and len(output) > 0 and isinstance(output[0], paddle.Tensor):
-                #     result_outputs.append(output)
-                # elif isinstance(output, tuple) and len(output) > 0 and isinstance(output[0], paddle.Tensor):
-                #     result_outputs.append(output)
 
         result_outputs_grads = []
         if len(self.outputs_grad_numpy) == 0:
             for output in result_outputs:
-                if output is None or output.size == 0:
-                    continue
                 dtype = str(output.dtype).split(".")[-1]
                 if USE_CACHED_NUMPY:
                     dtype = "float32" if dtype == "bfloat16" else dtype
@@ -595,8 +584,6 @@ class APITestBase:
                         numpy_tensor = (numpy.random.random(output.shape) - 0.5).astype(dtype)
                 self.outputs_grad_numpy.append(numpy_tensor)
         for i, numpy_tensor in enumerate(self.outputs_grad_numpy):
-            if numpy_tensor is None or numpy_tensor.size == 0:
-                continue
             dtype = str(result_outputs[i].dtype).split(".")[-1]
             result_output_grad = paddle.to_tensor(
                 numpy_tensor,
@@ -605,6 +592,50 @@ class APITestBase:
             result_output_grad.stop_gradient = False
             if dtype == "bfloat16":
                 result_output_grad = paddle.cast(result_output_grad, dtype="bfloat16")
+            result_outputs_grads.append(result_output_grad)
+        return result_outputs, result_outputs_grads
+
+    def gen_torch_output_and_output_grad(self, outputs):
+        result_outputs = []
+        if isinstance(outputs, torch.Tensor):
+            result_outputs.append(outputs)
+        elif isinstance(outputs, torch.Size):
+            result_outputs.append(torch.tensor(outputs))
+        elif isinstance(outputs, list):
+            result_outputs = [output for output in outputs if isinstance(output, torch.Tensor)]
+        elif isinstance(outputs, tuple):
+            for output in outputs:
+                if output is None:
+                    continue
+                elif isinstance(output, torch.Tensor):
+                    result_outputs.append(output)
+                else:
+                    raise ValueError("outputs format not support")
+
+        result_outputs_grads = []
+        if len(self.outputs_grad_numpy) == 0:
+            for output in result_outputs:
+                dtype = str(output.dtype).split(".")[-1]
+                if USE_CACHED_NUMPY:
+                    dtype = "float32" if dtype == "bfloat16" else dtype
+                    numpy_tensor = self.get_cached_numpy(dtype, output.shape)
+                else:
+                    if "int" in dtype:
+                        numpy_tensor = (numpy.random.randint(-65535, 65535, size=output.shape)).astype(dtype)
+                    else:
+                        dtype = "float32" if dtype == "bfloat16" else dtype
+                        numpy_tensor = (numpy.random.random(output.shape) - 0.5).astype(dtype)
+                self.outputs_grad_numpy.append(numpy_tensor)
+        for i, numpy_tensor in enumerate(self.outputs_grad_numpy):
+            dtype = str(result_outputs[i].dtype).split(".")[1]
+            result_output_grad = torch.tensor(
+                numpy_tensor,
+                dtype=self.convert_dtype_to_torch_type(dtype)
+                if dtype != 'bfloat16'
+                else torch.float32,
+            )
+            if dtype == "bfloat16":
+                result_output_grad = result_output_grad.to(dtype=torch.bfloat16)
             result_outputs_grads.append(result_output_grad)
         return result_outputs, result_outputs_grads
 
@@ -638,60 +669,6 @@ class APITestBase:
             return None
         else:
             raise ValueError(f'Unsupport dtype: {dtype}')
-
-    def gen_torch_output_and_output_grad(self, outputs):
-        result_outputs = []
-        if isinstance(outputs, torch.Tensor):
-            result_outputs.append(outputs)
-        elif isinstance(outputs, torch.Size):
-            result_outputs.append(torch.tensor(outputs))
-        elif isinstance(outputs, list) and len(outputs) > 0 and isinstance(outputs[0], torch.Tensor):
-            for output in outputs:
-                if output is not None:
-                    result_outputs.append(output)
-        elif isinstance(outputs, tuple):
-            for output in outputs:
-                if isinstance(output, torch.Tensor):
-                    result_outputs.append(output)
-                elif output is None:
-                    continue
-                else:
-                    raise ValueError("outputs format not support")
-                # elif isinstance(output, list) and len(output) > 0 and isinstance(output[0], torch.Tensor):
-                #     result_outputs.append(output)
-                # elif isinstance(output, tuple) and len(output) > 0 and isinstance(output[0], torch.Tensor):
-                #     result_outputs.append(output)
-
-        result_outputs_grads = []
-        if len(self.outputs_grad_numpy) == 0:
-            for output in result_outputs:
-                if output is None:
-                    continue
-                dtype = str(output.dtype).split(".")[-1]
-                if USE_CACHED_NUMPY:
-                    dtype = "float32" if dtype == "bfloat16" else dtype
-                    numpy_tensor = self.get_cached_numpy(dtype, output.shape)
-                else:
-                    if "int" in dtype:
-                        numpy_tensor = (numpy.random.randint(-65535, 65535, size=output.shape)).astype(dtype)
-                    else:
-                        dtype = "float32" if dtype == "bfloat16" else dtype
-                        numpy_tensor = (numpy.random.random(output.shape) - 0.5).astype(dtype)
-                self.outputs_grad_numpy.append(numpy_tensor)
-        for i, numpy_tensor in enumerate(self.outputs_grad_numpy):
-            if numpy_tensor is None:
-                continue
-            dtype = str(result_outputs[i].dtype).split(".")[1]
-            result_output_grad = torch.tensor(
-                numpy_tensor,
-                dtype=self.convert_dtype_to_torch_type(dtype)
-                if dtype != 'bfloat16'
-                else torch.float32,
-            )
-            if dtype == "bfloat16":
-                result_output_grad = result_output_grad.to(dtype=torch.bfloat16)
-            result_outputs_grads.append(result_output_grad)
-        return result_outputs, result_outputs_grads
 
     def gen_paddle_input_with_merged_kwargs(self):
         self.paddle_args = []
@@ -1015,6 +992,6 @@ class APITestBase:
         elif isinstance(dismiss_errors, (list, tuple)):
             return any(error in error_msg for error in dismiss_errors)
         return False
-    
+
     def should_check_dtype(self):
         return self.api_config.api_name not in not_check_dtype
