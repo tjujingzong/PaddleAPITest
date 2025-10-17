@@ -4469,7 +4469,8 @@ if isinstance(padding, str):
         pad_left, pad_right = _get_same_padding_1d(input_size, kernel_size, stride)
         padding = pad_left # 对称填充
         if pad_left != pad_right:  # 非对称填充
-            x = torch.nn.functional.pad(x, (pad_left, pad_right), mode="replicate")
+            # TODO(zrr1999) maybe mode="replicate"
+            x = torch.nn.functional.pad(x, (pad_left, pad_right))
             padding = 0
 elif isinstance(padding, (list, tuple)):
     if len(padding) == 1:  # [pad]
