@@ -8,7 +8,7 @@ from threading import Event, Thread
 from typing import Any, Dict, List, TextIO
 
 import yaml
-from framework_dialect import FrameworkDialect
+from .framework_dialect import FrameworkDialect
 
 
 class ConfigSerializer:

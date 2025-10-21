@@ -41,7 +41,7 @@
     由于 PyTorch 的大量核心功能由 C++ 实现，`SetattrHook` 钩子无法覆盖到底层算子，但可以抓取如 `nn.Linear` 等类级别 API。覆盖范围默认是 `api_list/torch_api_list.yaml` 的子集，由参数 `disable_torch_api_list` 控制。
 
 - `TorchFunctionHook`:
-    通过重写 PyTorch 官方的 `torch.overrides.TorchFunctionMode` 类实现。该方法可以捕获所有支持 `__torch_function__` 协议的 API 调用，即进入 PyTorch C++ 后端的函数调用。经过测试，这是追踪 PyTorch API 的首选方法（目前采用 `SetattrHook`` + `TorchFunctionHook`` 结合的方式），能够高效、准确地捕获所有 Torch C API 调用，覆盖范围广、对用户代码无侵入。
+    通过重写 PyTorch 官方的 `torch.overrides.TorchFunctionMode` 类实现。该方法可以捕获所有支持 `__torch_function__` 协议的 API 调用，即进入 PyTorch C++ 后端的函数调用。经过测试，这是追踪 PyTorch API 的首选方法（目前采用 `SetattrHook` + `TorchFunctionHook` 结合的方式），能够高效、准确地捕获所有 Torch C API 调用，覆盖范围广、对用户代码无侵入。
 
 - `TorchDispatchHook`:
     通过重写 PyTorch 官方的 `torch.utils._python_dispatch` 库的 `TorchDispatchMode` 类实现。该方法可以捕获所有通过 `torch.dispatch` 调用的函数，包括自定义的 `Tensor` 操作。 `torch.dispatch` 是 PyTorch 内部使用的调度机制，可以捕获到所有底层算子的调用（如 `aten::`），是抓取 PyTorch 底层算子的首选方法。
