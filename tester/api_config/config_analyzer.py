@@ -2006,7 +2006,7 @@ class TensorConfig:
                     if "int" in self.dtype:
                         self.numpy_tensor = (numpy.random.randint(-65535, 65535, size=self.shape)).astype(self.dtype)
                     else:
-                        self.numpy_tensor = (numpy.random.random(self.shape) - 0.5)*1.2.astype(self.dtype)
+                        self.numpy_tensor = ((numpy.random.random(self.shape) - 0.5)*1.2).astype(self.dtype)
 
         self.dtype = original_dtype
         return self.numpy_tensor
