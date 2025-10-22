@@ -46,13 +46,13 @@ def _get_cases(api_name: str, only_diff: bool, original_csv: str):
             last_col = float(row[-1]) if row[-1].strip() else 0
             second_last_col = float(row[-2]) if row[-2].strip() else 0
             outs.append(row[2].replace('""', '"'))
-        outfile.write("\n".join(outs))
+        outfile.write("\n".join(set(outs)))
 
 
 @app.command()
 def get_cases(
     api_names: list[str],
-    only_diff: bool = True,
+    only_diff: bool = False,
     config_path: Path = Path("TotalStableFull.csv"),
 ):
     for api_name in api_names:
