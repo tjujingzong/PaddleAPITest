@@ -13,6 +13,7 @@ NUM_GPUS=-1
 NUM_WORKERS_PER_GPU=15
 GPU_IDS="-1"
 REQUIRED_MEMORY=5
+TIME_OUT=600
 
 TEST_MODE_ARGS=(
 	--accuracy=True
@@ -35,6 +36,9 @@ PARALLEL_ARGS=(
     --gpu_ids="$GPU_IDS"
     --required_memory="$REQUIRED_MEMORY"
 )
+TIME_OUT_ARGS=(
+    --timeout="$TIME_OUT"
+)
 
 mkdir -p "$LOG_DIR" || {
     echo "错误：无法创建日志目录 '$LOG_DIR'"
@@ -48,6 +52,7 @@ if [ "$backprocess" -eq 1 ]; then
             "${TEST_MODE_ARGS[@]}" \
             "${IN_OUT_ARGS[@]}" \
             "${PARALLEL_ARGS[@]}" \
+            "${TIME_OUT_ARGS[@]}" \
             >> "$LOG_FILE" 2>&1 &
     PYTHON_PID=$!
 
@@ -68,6 +73,7 @@ else
             "${TEST_MODE_ARGS[@]}" \
             "${IN_OUT_ARGS[@]}" \
             "${PARALLEL_ARGS[@]}" \
+            "${TIME_OUT_ARGS[@]}" \
             2>&1 | tee -a "$LOG_FILE"
 
     PYTHON_PID=$!

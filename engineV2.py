@@ -450,6 +450,12 @@ def main():
         default=False,
         help="Whether to test tolerance range in accuracy",
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=1800,
+        help="Timeout setting for a single test case, in seconds",
+    )
     options = parser.parse_args()
     print(f"Options: {vars(options)}", flush=True)
 
@@ -656,7 +662,8 @@ def main():
                 batch = api_configs[batch_start : batch_start + BATCH_SIZE]
                 futures = {}
                 for config in batch:
-                    timeout = estimate_timeout(config)
+                    #timeout = estimate_timeout(config)
+                    timeout = options.timeout
                     future = pool.schedule(
                         run_test_case,
                         [config, options],
