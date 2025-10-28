@@ -117,7 +117,7 @@ def main():
     )
     parser.add_argument("-r", "--remove", required=True, help="包含要删除配置的文件")
     parser.add_argument(
-        "--backup", action="store_true", default=False, help="创建备份文件"
+        "-b", "--backup", action="store_true", default=False, help="创建备份文件"
     )
 
     args = parser.parse_args()

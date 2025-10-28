@@ -7,7 +7,7 @@ import torch
 # from func_timeout import func_set_timeout
 
 from .api_config.log_writer import write_to_log
-from .base import APITestBase
+from .base import APITestBase, CUDA_ERRORS
 from .paddle_to_torch import get_converter
 
 
@@ -124,8 +124,8 @@ class APITestAccuracy(APITestBase):
             print(f"[torch error] {self.api_config.config}\n{str(err)}", flush=True)
             traceback.print_exc()
             write_to_log("torch_error", self.api_config.config)
-            if "CUDA error" in str(err) or "memory corruption" in str(err) or "CUDA out of memory" in str(err):
-                raise err
+            if any(cuda_err in str(err) for cuda_err in CUDA_ERRORS):
+                raise
             return
 
         torch_grad_success = False
@@ -149,8 +149,8 @@ class APITestAccuracy(APITestBase):
                     write_to_log("numpy_error", self.api_config.config)
                     return
                 print(str(err), flush=True)
-                if "CUDA error" in str(err) or "memory corruption" in str(err) or "CUDA out of memory" in str(err):
-                    raise err
+                if any(cuda_err in str(err) for cuda_err in CUDA_ERRORS):
+                    raise
             try:
                 paddle.base.core.eager._for_test_check_cuda_error()
             except Exception as err:
@@ -205,10 +205,8 @@ class APITestAccuracy(APITestBase):
                 return
             print(f"[paddle error] {self.api_config.config}\n{str(err)}", flush=True)
             write_to_log("paddle_error", self.api_config.config)
-            if "CUDA error" in str(err) or "memory corruption" in str(err):
-                raise err
-            if "CUDA out of memory" in str(err) or "Out of memory error" in str(err):
-                raise err
+            if any(cuda_err in str(err) for cuda_err in CUDA_ERRORS):
+                raise
             return
 
         try:
@@ -329,10 +327,8 @@ class APITestAccuracy(APITestBase):
                     return
                 print(f"[paddle error] backward {self.api_config.config}\n{str(err)}", flush=True)
                 write_to_log("paddle_error", self.api_config.config)
-                if "CUDA error" in str(err) or "memory corruption" in str(err):
-                    raise err
-                if "CUDA out of memory" in str(err) or "Out of memory error" in str(err):
-                    raise err
+                if any(cuda_err in str(err) for cuda_err in CUDA_ERRORS):
+                    raise
                 return
 
             try:

@@ -5,19 +5,9 @@ import torch
 import numpy
 
 from .api_config.log_writer import log_accuracy_stable, write_to_log
-from .base import APITestBase
+from .base import APITestBase, CUDA_ERRORS
 from .paddle_to_torch import get_converter
 from .accuracy import process_output, process_grad_output
-
-
-cuda_errors = frozenset(
-    [
-        "CUDA error",
-        "memory corruption",
-        "CUDA out of memory",
-        "Out of memory error",
-    ]
-)
 
 
 class APITestAccuracyStable(APITestBase):
@@ -165,7 +155,7 @@ class APITestAccuracyStable(APITestBase):
             print(f"[torch error] {self.api_config.config}\n{err_str}", flush=True)
             traceback.print_exc()
             write_to_log("torch_error", self.api_config.config)
-            if any(cuda_err in err_str for cuda_err in cuda_errors):
+            if any(cuda_err in err_str for cuda_err in CUDA_ERRORS):
                 raise
             return None, None, None
 
@@ -195,7 +185,7 @@ class APITestAccuracyStable(APITestBase):
                     write_to_log("numpy_error", self.api_config.config)
                     return None, None, None
                 print(err_str, flush=True)
-                if any(cuda_err in err_str for cuda_err in cuda_errors):
+                if any(cuda_err in err_str for cuda_err in CUDA_ERRORS):
                     raise
 
             try:
@@ -250,7 +240,7 @@ class APITestAccuracyStable(APITestBase):
                 if len(self.paddle_args) > 0
                 else next(iter(self.paddle_kwargs.values()))
             )
-            if "paddle.Tensor." in self.api_config.api_name:
+            if self.api_config.api_name.startswith("paddle.Tensor."):
                 api_name = self.api_config.api_name.split(".")[-1]
                 api = getattr(self.paddle_args[0], api_name)
                 if self.test_amp:
@@ -282,7 +272,7 @@ class APITestAccuracyStable(APITestBase):
             print(f"[paddle error] {self.api_config.config}\n{err_str}", flush=True)
             traceback.print_exc()
             write_to_log("paddle_error", self.api_config.config)
-            if any(cuda_err in err_str for cuda_err in cuda_errors):
+            if any(cuda_err in err_str for cuda_err in CUDA_ERRORS):
                 raise
             return None, None
 
@@ -327,7 +317,7 @@ class APITestAccuracyStable(APITestBase):
                 )
                 traceback.print_exc()
                 write_to_log("paddle_error", self.api_config.config)
-                if any(cuda_err in err_str for cuda_err in cuda_errors):
+                if any(cuda_err in err_str for cuda_err in CUDA_ERRORS):
                     raise
                 return None, None
 
