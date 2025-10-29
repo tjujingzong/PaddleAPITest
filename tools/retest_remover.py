@@ -1,69 +1,132 @@
-# 重测配置移除小工具（timeout、crash、oom、skip）
+# 重测配置移除小工具
 # @author: cangtianhuang
 # @date: 2025-06-08
 
+import argparse
 import os
 from pathlib import Path
 
-TEST_LOG_PATH = Path("tester/api_config/test_log")
-
 LOG_PREFIXES = {
+    "pass": "api_config_pass",
+    "numpy_error": "api_config_numpy_error",
+    "paddle_error": "api_config_paddle_error",
+    "torch_error": "api_config_torch_error",
+    "paddle_to_torch_failed": "api_config_paddle_to_torch_failed",
+    "accuracy_error": "api_config_accuracy_error",
+    "accuracy_diff": "api_config_accuracy_diff",
     "timeout": "api_config_timeout",
     "crash": "api_config_crash",
     "oom": "api_config_oom",
-    "skip": "api_config_skip",
+    "match_error": "api_config_match_error",
 }
 
-checkpoint_configs = set()
-checkpoint_file = TEST_LOG_PATH / "checkpoint.txt"
-if not checkpoint_file.exists():
-    print("No checkpoint file found", flush=True)
-    exit(0)
 
-try:
-    with checkpoint_file.open("r") as f:
-        checkpoint_configs = set(line.strip() for line in f if line.strip())
-except Exception as err:
-    print(f"Error reading {checkpoint_file}: {err}", flush=True)
-    exit(0)
-print(f"Read {len(checkpoint_configs)} api configs from checkpoint", flush=True)
+def remove_configs(log_path, to_remove):
+    log_path = Path(log_path)
+    if not log_path.exists():
+        print(f"{log_path} not exists", flush=True)
+        return
 
-retest_configs = set()
-for log_type, prefix in LOG_PREFIXES.items():
-    log_file = TEST_LOG_PATH / f"{prefix}.txt"
-    if not log_file.exists():
-        continue
+    checkpoint_configs = set()
+    checkpoint_file = log_path / "checkpoint.txt"
+    if not checkpoint_file.exists():
+        print("No checkpoint file found", flush=True)
+        return
+
     try:
-        with log_file.open("r") as f:
-            lines = set(line.strip() for line in f if line.strip())
-            retest_configs.update(lines)
-            print(f"Read {len(lines)} api configs from {log_file}", flush=True)
+        with checkpoint_file.open("r") as f:
+            checkpoint_configs = set(line.strip() for line in f if line.strip())
     except Exception as err:
-        print(f"Error reading {log_file}: {err}", flush=True)
-        exit(0)
+        print(f"Error reading {checkpoint_file}: {err}", flush=True)
+        return
+    print(f"Read {len(checkpoint_configs)} api configs from checkpoint", flush=True)
 
-if retest_configs:
-    checkpoint_count = len(checkpoint_configs)
-    checkpoint_configs -= retest_configs
-    print(
-        f"checkpoint removed: {checkpoint_count - len(checkpoint_configs)}", flush=True
+    retest_configs = set()
+    for log_type in to_remove:
+        if log_type not in LOG_PREFIXES:
+            print(f"Invalid log type: {log_type}", flush=True)
+            continue
+        prefix = LOG_PREFIXES[log_type]
+        log_file = log_path / f"{prefix}.txt"
+        if not log_file.exists():
+            continue
+        try:
+            with log_file.open("r") as f:
+                lines = set(line.strip() for line in f if line.strip())
+                retest_configs.update(lines)
+                print(f"Read {len(lines)} api configs from {log_file}", flush=True)
+        except Exception as err:
+            print(f"Error reading {log_file}: {err}", flush=True)
+            return
+
+    if retest_configs:
+        checkpoint_count = len(checkpoint_configs)
+        checkpoint_configs -= retest_configs
+        print(
+            f"checkpoint removed: {checkpoint_count - len(checkpoint_configs)}",
+            flush=True,
+        )
+        print(f"checkpoint remaining: {len(checkpoint_configs)}", flush=True)
+        try:
+            with checkpoint_file.open("w") as f:
+                f.writelines(f"{line}\n" for line in sorted(checkpoint_configs))
+        except Exception as err:
+            print(f"Error writing {checkpoint_file}: {err}", flush=True)
+            return
+    else:
+        print("No retest configs found", flush=True)
+
+    for prefix in LOG_PREFIXES.values():
+        log_file = log_path / f"{prefix}.txt"
+        if not log_file.exists():
+            continue
+        try:
+            os.remove(log_file)
+        except Exception as err:
+            print(f"Error removing {log_file}: {err}", flush=True)
+            return
+
+
+def main():
+    default_log_path = "tester/api_config/test_log"
+
+    parser = argparse.ArgumentParser(
+        description="重测配置移除小工具",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用示例:
+  python %(prog)s --path tester/api_config/test_log # 指定测试日志路径
+  python %(prog)s --remove timeout oom skip         # 指定需要移除的配置
+支持移除的配置集合:
+  pass          -   api_config_pass
+  numpy_error   -   api_config_numpy_error
+  paddle_error  -   api_config_paddle_error
+  torch_error   -   api_config_torch_error
+  paddle_to_torch_failed - api_config_paddle_to_torch_failed
+  accuracy_error    -   api_config_accuracy_error
+  accuracy_diff     -   api_config_accuracy_diff
+  timeout           -   api_config_timeout
+  crash             -   api_config_crash
+  oom               -   api_config_oom
+  match_error       -   api_config_match_error
+        """,
     )
-    print(f"checkpoint remaining: {len(checkpoint_configs)}", flush=True)
-    try:
-        with checkpoint_file.open("w") as f:
-            f.writelines(f"{line}\n" for line in sorted(checkpoint_configs))
-    except Exception as err:
-        print(f"Error writing {checkpoint_file}: {err}", flush=True)
-        exit(0)
-else:
-    print("No retest configs found", flush=True)
+    parser.add_argument(
+        "--path",
+        "-p",
+        type=str,
+        default=default_log_path,
+        help="测试日志目录路径",
+    )
+    parser.add_argument(
+        "--remove",
+        "-r",
+        nargs="+",
+        help="指定需要移除的配置",
+    )
+    args = parser.parse_args()
+    remove_configs(args.path, args.remove)
 
-for prefix in LOG_PREFIXES.values():
-    log_file = TEST_LOG_PATH / f"{prefix}.txt"
-    if not log_file.exists():
-        continue
-    try:
-        os.remove(log_file)
-    except Exception as err:
-        print(f"Error removing {log_file}: {err}", flush=True)
-        exit(0)
+
+if __name__ == "__main__":
+    main()

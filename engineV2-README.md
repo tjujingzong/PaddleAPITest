@@ -72,15 +72,17 @@
 | `--accuracy_stable`              | bool  | 启用稳定性测试（默认 False）                                                           |
 | `--num_gpus`                     | int   | 使用的 GPU 数量（默认 -1，-1 动态最大）                                                |
 | `--num_workers_per_gpu`          | int   | 每 GPU 的 worker 进程数（默认 1，-1 动态最大）                                         |
-| `--gpu_ids`                      | str   | 使用的 GPU 序号，以逗号分隔（默认 ""，"-1" 动态最大）                                  |
+| `--gpu_ids`                      | str   | 使用的 GPU 序号，以逗号分隔或横线范围（默认 ""，"-1" 动态最大）                        |
 | `--required_memory`              | float | 每 worker 进程预估使用显存 GB（默认 10.0）                                             |
 | `--test_amp`                     | bool  | 启用自动混合精度测试（默认 False）                                                     |
 | `--test_cpu`                     | bool  | 启用 Paddle CPU 模式测试（默认 False）                                                 |
 | `--use_cached_numpy`             | bool  | 启用 Numpy 缓存（默认 False）                                                          |
 | `--log_dir`                      | str   | 日志输出路径（默认 "tester/api_config/test_log"）                                      |
-| `--atol`                         | float | 精度测试的绝对误差容忍度（默认 1e-2）                                                  |
-| `--rtol`                         | float | 精度测试的相对误差容忍度（默认 1e-2）                                                  |
-| `--test_tol`                     | bool  | 启用精度误差容忍度范围测试（默认 False）                                               |
+| `--atol`                         | float | 精度测试的绝对误差容忍度，仅在启用 `--accuracy` 时有效（默认 1e-2）                    |
+| `--rtol`                         | float | 精度测试的相对误差容忍度，仅在启用 `--accuracy` 时有效（默认 1e-2）                    |
+| `--test_tol`                     | bool  | 启用精度误差容忍度范围测试，仅在启用 `--accuracy` 时有效（默认 False）                 |
+| `--test_backward`                | bool  | 启用反向测试，仅在启用 `--paddle_cinn` 时有效（默认 False）                            |
+| `--timeout`                      | int   | 单个测试用例执行超时秒数（默认 1800）                                                  |
 
 ### 示例命令
 

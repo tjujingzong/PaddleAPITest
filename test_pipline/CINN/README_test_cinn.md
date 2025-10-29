@@ -1,4 +1,4 @@
-# cpu_0size 测试流程
+# CINN big tensor 测试流程
 
 ### 1. 准备测试环境
 
@@ -23,36 +23,25 @@
 5. 安装第三方库
 
    ```bash
-   pip install func_timeout pebble pynvml
+   pip install pandas pebble pynvml pyyaml
    ```
 
 ### 2. 准备测试集
 
-0 size 的配置集位于目录：`tester/api_config/7_0_size`
+big tensor 的配置集位于：`tester/api_config/8_big_tensor/big_tensor_merged.txt`
 
-```bash
-tester/api_config/7_0_size
-├── 0_size_tensor_1_8_1.txt
-├── 0_size_tensor_1_8_2.txt
-├── 0_size_tensor_1_8_invalid_1.txt
-├── 0_size_tensor_1_8_invalid_2.txt
-├── 0_size_tensor_1_8_invalid_3.txt
-├── 0_size_tensor_error_0319_cpu_accuracy.txt
-├── 0_size_tensor_error_0319_cpu_paddleonly.txt
-├── 0_size_tensor_error_0319_gpu_accuracy.txt
-└── 0_size_tensor_error_0319_gpu_paddleonly.txt
-```
+该文件为同文件夹下其他 **有效**配置 的 **合并去重**
 
 ### 3. 准备测试脚本
 
-`run-example.sh` 是与 engineV2 配套的执行脚本，可以非常方便地修改测试参数并执行测试
+`run-example.sh` 是与 engineV2 配套的执行脚本，可以方便地修改测试参数并执行测试
 
-复制 `run-example.sh`，重命名为 `run_0_cpu.sh`
+复制 `run-example.sh`，重命名为 `run_cinn.sh`
 ```bash
-cp run-example.sh run_0_cpu.sh
+cp run-example.sh run_cinn.sh
 ```
 
-以测试 0 size cpu accuracy 为例，文件内容可修改为：
+文件内容修改为：
 ```bash
 #!/bin/bash
 
@@ -61,26 +50,34 @@ cp run-example.sh run_0_cpu.sh
 
 # 配置参数
 # NUM_GPUS!=0 时，engineV2 不受外部 "CUDA_VISIBLE_DEVICES" 影响
-# FILE_INPUT="tester/api_config/7_0_size/0_size_tensor_1_8_1.txt"
-FILE_PATTERN="tester/api_config/7_0_size/0_size_tensor_1_8_[1-2].txt" # 测试集 glob 路径
-LOG_DIR="tester/api_config/test_log_0_size_cpu_accuracy" # 测试日志目录
-NUM_GPUS=-1 # 指定 GPU 数量，-1 表示使用所有 GPU
-NUM_WORKERS_PER_GPU=15 # 每个 GPU 使用 15 个 worker（建议不超过 15 个，否则内存会爆）
-GPU_IDS="-1" # 指定 GPU 列表，-1 表示使用所有 GPU
-REQUIRED_MEMORY=5 # 每个 worker 预估所需显存 GB
+FILE_INPUT="tester/api_config/8_big_tensor/big_tensor_merged.txt"
+# FILE_PATTERN="tester/api_config/5_accuracy/accuracy_*.txt"
+LOG_DIR="tester/api_config/test_log_cinn"
+NUM_GPUS=-1
+NUM_WORKERS_PER_GPU=1
+GPU_IDS="-1"
+# REQUIRED_MEMORY=10
 
 TEST_MODE_ARGS=(
-	--accuracy=True
-	# --paddle_only=True
-    # --paddle_cinn=True
-	# --test_amp=True
-	--test_cpu=True # 启用 CPU 测试
-	# --use_cached_numpy=True
+    # --accuracy=True
+    # --paddle_only=True
+    --paddle_cinn=True
+    # --paddle_gpu_performance=True
+    # --torch_gpu_performance=True
+    # --paddle_torch_gpu_performance=True
+    # --accuracy_stable=True
+    # --test_amp=True
+    # --test_cpu=True
+    --use_cached_numpy=True
+    # --atol=1e-2
+    # --rtol=1e-2
+    # --test_tol=True
+    # --test_backward=True # 需要测试反向时，取消此注释
 )
 
 IN_OUT_ARGS=(
-    # --api_config_file="$FILE_INPUT"
-    --api_config_file_pattern="$FILE_PATTERN"
+    --api_config_file="$FILE_INPUT"
+    # --api_config_file_pattern="$FILE_PATTERN"
     --log_dir="$LOG_DIR"
 )
 
@@ -88,7 +85,7 @@ PARALLEL_ARGS=(
     --num_gpus="$NUM_GPUS"
     --num_workers_per_gpu="$NUM_WORKERS_PER_GPU"
     --gpu_ids="$GPU_IDS"
-    --required_memory="$REQUIRED_MEMORY"
+    # --required_memory="$REQUIRED_MEMORY"
 )
 
 mkdir -p "$LOG_DIR" || {
@@ -124,51 +121,45 @@ exit 0
 # watch -n 1 nvidia-smi --query-compute-apps=pid,process_name,used_memory,gpu_uuid --format=csv
 ```
 
-若需要测试 0 size cpu paddleonly，可修改 `TEST_MODE_ARGS` 为：
-```bash
-TEST_MODE_ARGS=(
-    --paddle_only=True
-    --test_cpu=True
-)
-```
+> [!NOTE]
+> --paddle_cinn 模式默认不测试反向，如果要开启反向测试，请打开 --test_backward 参数
 
 ### 4. 执行测试
 
-若不使用 `run_0_cpu.sh`，以测试 0 size cpu accuracy 为例，可直接执行以下命令：（建议使用 nohup 避免终端终止时停止主进程）
+直接运行 `run_cinn.sh`：
 ```bash
-python engineV2.py --api_config_file_pattern="tester/api_config/7_0_size/0_size_tensor_1_8_[1-2].txt" --accuracy=True --test_cpu=True --num_gpus=-1 --num_workers_per_gpu=15 --required_memory=5 --log_dir="tester/api_config/test_log_0_size_cpu_accuracy" >> "tester/api_config/test_log_0_size_cpu_accuracy/log.log" 2>&1
+# chmod +x run_cinn.sh
+./run_cinn.sh
 ```
 
-或者直接运行 run_0_cpu.sh：
+或者直接执行以下命令：（建议使用 nohup 避免终端终止时停止主进程）
 ```bash
-# chmod +x run_0_cpu.sh
-./run_0_cpu.sh
+python engineV2.py --api_config_file="tester/api_config/8_big_tensor/big_tensor_merged.txt" --paddle_cinn=True --num_gpus=-1 --log_dir="tester/api_config/test_log_cinn" >> "tester/api_config/test_log_cinn/log.log" 2>&1
 ```
 
-最终的所有测试结果会保存在 `tester/api_config/test_log_0_size_cpu_accuracy` 目录下，包括：
+最终的所有测试结果会保存在 `tester/api_config/test_log_cinn` 目录下，包括：
 - 检查点文件 checkpoint.txt
 - 以 api_config_ 开头的配置集文件
 - 测试日志文件 log.log
 - 详细测试结果文件 log_inorder.log
 
-### 4. 继续测试
+### 5. 继续测试
 
-apitest 拥有检查点 checkpoint 机制，保存了所有已经测试过的配置。若希望继续测试，可直接运行脚本，无需重新测试已经测过的配置，**切勿删除测试结果目录**
+apitest 拥有检查点 checkpoint 机制，保存了所有已经测试过的配置。若希望中止测试，可直接杀死主进程；若希望继续测试，可直接重新运行脚本，无需重新测试已经测过的配置，**切勿删除测试结果目录**
 
 若存在 skip、oom、crash、timeout 等异常配置，且希望重新测试它们，可使用 `tools/retest_remover.py` 小工具：
-- 修改 `TEST_LOG_PATH` 为 `tester/api_config/test_log_0_size_cpu_accuracy`
-- （可选）决定 `LOG_PREFIXES` 中需要重测的配置集
-- 直接运行
+```bash
+python tools/retest_remover.py -p tester/api_config/test_log_cinn -r skip oom
+```
 
 即可删去 checkpoint.txt 中的配置，然后继续测试
 
-### 5. 整理测试结果
+### 6. 整理测试结果
 
-若需要整理出具 error 报告，可使用 `tools/error_stat_0_size.py` 小工具：
-- 修改 `TEST_LOG_PATH` 为 `tester/api_config/test_log_0_size_cpu_accuracy`
-- （可选）修改 `# classify logs` 处的日志分类规则，可进行无效日志筛选
-- （可选）修改 `# error logs` 处的错误日志列表，可进行错误日志筛选
-- 直接运行
+若需要整理出具 error 报告，可使用 `tools/error_stat/error_stat_big_tensor.py` 小工具：
+```bash
+python tools/error_stat/error_stat_big_tensor.py -i tester/api_config/test_log_cinn
+```
 
 即可在原测试结果目录中生成以下文件：
 - `error_api.txt`

@@ -90,14 +90,18 @@ def validate_gpu_options(options) -> tuple:
                 part = part.strip()
                 if not part:
                     continue
-                if "-" in part:
+                if part.startswith("-") and part[1:].isdigit():
+                    gpu_ids.append(int(part))
+                elif "-" in part and not part.startswith("-"):
                     start, end = map(int, part.split("-"))
+                    if start > end:
+                        raise ValueError(f"Invalid range: {part} (start > end)")
                     gpu_ids.extend(range(start, end + 1))
                 else:
                     gpu_ids.append(int(part))
         except ValueError:
             raise ValueError(
-                f"Invalid gpu_ids: {options.gpu_ids} (int expected)"
+                f"Invalid gpu_ids: {options.gpu_ids} (int or range expected)"
             ) from None
         if len(gpu_ids) != len(set(gpu_ids)):
             raise ValueError(f"Invalid gpu_ids: {options.gpu_ids} (duplicates)")
