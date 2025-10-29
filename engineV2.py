@@ -33,6 +33,8 @@ from tester.api_config.log_writer import *
 os.environ["FLAGS_use_system_allocator"] = "1"
 os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
 
+VALID_TEST_ARGS = {"test_amp", "test_backward", "atol", "rtol", "test_tol"}
+
 
 def cleanup(pool):
     print(f"{datetime.now()} Cleanup started", flush=True)
@@ -83,8 +85,17 @@ def validate_gpu_options(options) -> tuple:
         raise ValueError("No GPUs found")
     if options.gpu_ids:
         try:
-            gpu_ids = [int(id) for id in options.gpu_ids.split(",") if id.strip()]
-        except ValueError as e:
+            gpu_ids = []
+            for part in options.gpu_ids.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                if "-" in part:
+                    start, end = map(int, part.split("-"))
+                    gpu_ids.extend(range(start, end + 1))
+                else:
+                    gpu_ids.append(int(part))
+        except ValueError:
             raise ValueError(
                 f"Invalid gpu_ids: {options.gpu_ids} (int expected)"
             ) from None
@@ -299,17 +310,8 @@ def run_test_case(api_config_str, options):
         (cls for opt, cls in option_to_class.items() if getattr(options, opt, False)),
         APITestAccuracy,  # default fallback
     )
-
-    if options.accuracy:
-        case = test_class(
-            api_config,
-            test_amp=options.test_amp,
-            atol=options.atol,
-            rtol=options.rtol,
-            test_tol=options.test_tol,
-        )
-    else:
-        case = test_class(api_config, test_amp=options.test_amp)
+    kwargs = {k: v for k, v in vars(options).items() if k in VALID_TEST_ARGS}
+    case = test_class(api_config, **kwargs)
     try:
         case.test()
     except Exception as err:
@@ -411,7 +413,8 @@ def main():
         "--gpu_ids",
         type=str,
         default="",
-        help="Comma-separated list of GPU IDs to use (e.g., 0,1,2), -1 for all available",
+        help="GPU IDs to use ('-1' for all available). "
+            "Accepts comma-separated values and/or ranges (e.g., '0-3,6,7')",
     )
     parser.add_argument(
         "--required_memory",
@@ -448,7 +451,13 @@ def main():
         "--test_tol",
         type=parse_bool,
         default=False,
-        help="Whether to test tolerance range in accuracy",
+        help="Whether to test tolerance range in accuracy mode",
+    )
+    parser.add_argument(
+        "--test_backward",
+        type=parse_bool,
+        default=False,
+        help="Whether to test backward in paddle_cinn mode",
     )
     parser.add_argument(
         "--timeout",
@@ -484,6 +493,8 @@ def main():
         return
     if options.test_tol and not options.accuracy:
         print(f"--test_tol takes effect when --accuracy is True.", flush=True)
+    if options.test_backward and not options.paddle_cinn:
+        print(f"--test_backward takes effect when --paddle_cinn is True.", flush=True)
     os.environ["USE_CACHED_NUMPY"] = str(options.use_cached_numpy)
 
     if options.log_dir:
@@ -496,7 +507,7 @@ def main():
                             APITestPaddleOnly,
                             APITestPaddleTorchGPUPerformance,
                             APITestTorchGPUPerformance)
-        
+
         # set log_writer
         set_engineV2()
 
@@ -662,7 +673,7 @@ def main():
                 batch = api_configs[batch_start : batch_start + BATCH_SIZE]
                 futures = {}
                 for config in batch:
-                    #timeout = estimate_timeout(config)
+                    # timeout = estimate_timeout(config)
                     timeout = options.timeout
                     future = pool.schedule(
                         run_test_case,

@@ -9,8 +9,8 @@ try:
 except ImportError:
     from typing_extensions import Unpack
 
-from config_serializer import ConfigSerializer
-from framework_dialect import FrameworkDialect, TracingHook
+from .config_serializer import ConfigSerializer
+from .framework_dialect import FrameworkDialect, TracingHook
 
 
 class APITracerKwargs(TypedDict, total=False):
@@ -161,7 +161,7 @@ class APITracer:
 
         等价于 api_alias.get_alias_apis
         """
-        from api_alias_tool import get_alias_apis
+        from .api_alias_tool import get_alias_apis
 
         get_alias_apis(input_path, yaml_path)
 
@@ -178,7 +178,7 @@ class APITracer:
 
         等价于 api_merge.merge_model_apis
         """
-        from api_merge_tool import get_merged_model_apis
+        from .api_merge_tool import get_merged_model_apis
 
         get_merged_model_apis(
             input_path, output_path, sheet_name, model_groups, yaml_paths
@@ -197,7 +197,7 @@ class APITracer:
 
         等价于 api_map_tool.get_mapped_model_apis
         """
-        from api_map_tool import get_mapped_model_apis
+        from .api_map_tool import get_mapped_model_apis
 
         get_mapped_model_apis(
             torch_static_path,

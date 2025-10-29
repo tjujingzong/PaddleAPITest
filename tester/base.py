@@ -27,6 +27,15 @@ with open("tester/api_config/torch_error_skip.txt", "r") as f:
 
 del config
 
+CUDA_ERRORS = frozenset(
+    [
+        "CUDA error",
+        "memory corruption",
+        "CUDA out of memory",
+        "Out of memory error",
+    ]
+)
+
 def get_arg(api_config, arg_pos, arg_name, default=None):
     if 0 <= arg_pos < len(api_config.args):
         return api_config.args[arg_pos]
@@ -829,6 +838,61 @@ class APITestBase:
             atol=atol,
             equal_nan=True,
         )
+
+    def paddle_assert_accuracy(
+        self, actual_paddle_tensor, expected_paddle_tensor, atol=1e-2, rtol=1e-2
+    ):
+        is_check_dtype = self.api_config.api_name not in not_check_dtype
+
+        if not actual_paddle_tensor.is_contiguous():
+            actual_paddle_tensor = actual_paddle_tensor.contiguous()
+        actual_paddle_tensor = actual_paddle_tensor.cpu().detach()
+
+        if not expected_paddle_tensor.is_contiguous():
+            expected_paddle_tensor = expected_paddle_tensor.contiguous()
+        expected_paddle_tensor = expected_paddle_tensor.cpu().detach()
+
+        actual_paddle_dlpack = paddle.utils.dlpack.to_dlpack(actual_paddle_tensor)  # type: ignore
+        converted_actual_paddle_tensor = torch.utils.dlpack.from_dlpack(actual_paddle_dlpack)  # type: ignore
+
+        expected_paddle_dlpack = paddle.utils.dlpack.to_dlpack(expected_paddle_tensor)  # type: ignore
+        converted_paddle_tensor = torch.utils.dlpack.from_dlpack(expected_paddle_dlpack)  # type: ignore
+
+        def error_msg(msg):
+            return (
+                f"Not equal to tolerance rtol={rtol}, atol={atol}\n"
+                f"{msg}\n"
+                f"ACTUAL: (shape={converted_paddle_tensor.shape}, dtype={converted_paddle_tensor.dtype})\n"
+                f"{converted_paddle_tensor}\n"
+                f"DESIRED: (shape={converted_paddle_tensor.shape}, dtype={converted_paddle_tensor.dtype})\n"
+                f"{converted_paddle_tensor}"
+            )
+
+        if self.api_config.api_name in special_accuracy_atol_rtol:
+            atol, rtol = special_accuracy_atol_rtol[self.api_config.api_name]
+
+        try:
+            torch.testing.assert_close(
+                converted_paddle_tensor,
+                converted_paddle_tensor,
+                rtol=rtol,
+                atol=atol,
+                equal_nan=True,
+                check_dtype=is_check_dtype,
+                msg=error_msg,
+            )
+        except Exception as e:
+            error_str = str(e)
+            if error_str.startswith("Comparing"):
+                print(f"torch_assert failed, try np_assert", flush=True)
+                self.np_assert_accuracy(
+                    actual_paddle_tensor.numpy(),
+                    expected_paddle_tensor.numpy(),
+                    atol,
+                    rtol,
+                )
+            else:
+                raise
 
     def torch_assert_accuracy(self, paddle_tensor, torch_tensor, atol=1e-2, rtol=1e-2):
         is_check_dtype = self.api_config.api_name not in not_check_dtype

@@ -5,30 +5,28 @@
 
 # 配置参数
 # NUM_GPUS!=0 时，engineV2 不受外部 "CUDA_VISIBLE_DEVICES" 影响
-FILE_INPUT="tester/api_config/5_accuracy/accuracy_1.txt"
+FILE_INPUT="tester/api_config/output/big_tensor_merged.txt"
 # FILE_PATTERN="tester/api_config/5_accuracy/accuracy_*.txt"
 LOG_DIR="tester/api_config/test_log"
 NUM_GPUS=-1
-NUM_WORKERS_PER_GPU=-1
-GPU_IDS="4-7"
+NUM_WORKERS_PER_GPU=1
+GPU_IDS="4,5,6,7"
 # REQUIRED_MEMORY=10
-TIME_OUT=600
 
 TEST_MODE_ARGS=(
-    --accuracy=True
+    # --accuracy=True
     # --paddle_only=True
-    # --paddle_cinn=True
+    --paddle_cinn=True
     # --paddle_gpu_performance=True
     # --torch_gpu_performance=True
     # --paddle_torch_gpu_performance=True
     # --accuracy_stable=True
     # --test_amp=True
     # --test_cpu=True
-    # --use_cached_numpy=True
+    --use_cached_numpy=True
     # --atol=1e-2
     # --rtol=1e-2
     # --test_tol=True
-    # --test_backward=True
 )
 
 IN_OUT_ARGS=(
@@ -43,9 +41,7 @@ PARALLEL_ARGS=(
     --gpu_ids="$GPU_IDS"
     # --required_memory="$REQUIRED_MEMORY"
 )
-TIME_OUT_ARGS=(
-    --timeout="$TIME_OUT"
-)
+
 mkdir -p "$LOG_DIR" || {
     echo "错误：无法创建日志目录 '$LOG_DIR'"
     exit 1
@@ -57,7 +53,6 @@ nohup python engineV2.py \
         "${TEST_MODE_ARGS[@]}" \
         "${IN_OUT_ARGS[@]}" \
         "${PARALLEL_ARGS[@]}" \
-        "${TIME_OUT_ARGS[@]}" \
         >> "$LOG_FILE" 2>&1 &
 
 PYTHON_PID=$!

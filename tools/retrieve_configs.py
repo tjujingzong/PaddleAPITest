@@ -19,15 +19,20 @@ def collect_input_files(input_paths):
     return files
 
 
-def search_files(input_paths, keywords, output_file):
+def search_files(input_paths, keywords, output_file, exact_match=False):
     input_files = collect_input_files(input_paths)
     if not input_files:
         print("No valid input files found")
         return
 
-    pattern = re.compile(
-        "|".join(rf"^[^(\n]*{re.escape(kw)}[^(\n]*\(" for kw in keywords)
-    )
+    if exact_match:
+        pattern = re.compile(
+            "|".join(rf"\b{re.escape(kw)}\b[^(\n]*\(" for kw in keywords)
+        )
+    else:
+        pattern = re.compile(
+            "|".join(rf"^[^(\n]*{re.escape(kw)}[^(\n]*\(" for kw in keywords)
+        )
 
     configs = set()
     prefixes = set()
@@ -67,8 +72,8 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="""
 使用示例:
-  python %(prog)s -k matmul linear  # 模糊搜索
-  python %(prog)s -k paddle.matmul  # 精确搜索
+  python %(prog)s -k matmul linear      # 模糊搜索
+  python %(prog)s -k paddle.matmul -e   # 精确搜索
 """,
     )
     parser.add_argument(
@@ -86,11 +91,17 @@ def main():
         default=default_keywords,
         help="关键词列表",
     )
+    parser.add_argument(
+        "--exact",
+        "-e",
+        action="store_true",
+        help="启用精确匹配（匹配完整单词）",
+    )
     parser.add_argument("--output", "-o", default=default_output, help="输出文件路径")
 
     args = parser.parse_args()
 
-    search_files(args.input, args.keywords, args.output)
+    search_files(args.input, args.keywords, args.output, args.exact)
 
 
 if __name__ == "__main__":
