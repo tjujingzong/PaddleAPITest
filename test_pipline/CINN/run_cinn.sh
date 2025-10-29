@@ -5,25 +5,25 @@
 
 # 配置参数
 # NUM_GPUS!=0 时，engineV2 不受外部 "CUDA_VISIBLE_DEVICES" 影响
-FILE_INPUT="tester/api_config/api_config_tmp.txt"
+FILE_INPUT="tester/api_config/8_big_tensor/big_tensor_merged.txt"
 # FILE_PATTERN="tester/api_config/5_accuracy/accuracy_*.txt"
 LOG_DIR="tester/api_config/test_log_cinn"
 NUM_GPUS=-1
-NUM_WORKERS_PER_GPU=1
+NUM_WORKERS_PER_GPU=1 # 建议单卡单进程
 GPU_IDS="-1"
 # REQUIRED_MEMORY=10
 
 TEST_MODE_ARGS=(
     # --accuracy=True
     # --paddle_only=True
-    --paddle_cinn=True
+    --paddle_cinn=True # CINN 测试
     # --paddle_gpu_performance=True
     # --torch_gpu_performance=True
     # --paddle_torch_gpu_performance=True
     # --accuracy_stable=True
     # --test_amp=True
     # --test_cpu=True
-    --use_cached_numpy=True
+    --use_cached_numpy=True # 开启 numpy 缓存
     # --atol=1e-2
     # --rtol=1e-2
     # --test_tol=True
