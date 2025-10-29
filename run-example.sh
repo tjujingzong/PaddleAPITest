@@ -10,7 +10,7 @@ FILE_INPUT="tester/api_config/5_accuracy/accuracy_1.txt"
 LOG_DIR="tester/api_config/test_log"
 NUM_GPUS=-1
 NUM_WORKERS_PER_GPU=-1
-GPU_IDS="4,5,6,7"
+GPU_IDS="4-7"
 # REQUIRED_MEMORY=10
 TIME_OUT=600
 
@@ -28,6 +28,7 @@ TEST_MODE_ARGS=(
     # --atol=1e-2
     # --rtol=1e-2
     # --test_tol=True
+    # --test_backward=True
 )
 
 IN_OUT_ARGS=(

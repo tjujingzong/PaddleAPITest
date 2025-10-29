@@ -13,7 +13,7 @@ TEST_LOG_PATH = DIR_PATH / "tester/api_config/test_log"
 TEST_LOG_PATH.mkdir(parents=True, exist_ok=True)
 TMP_LOG_PATH = TEST_LOG_PATH / ".tmp"
 
-# 日志类型和对应的文件
+# 日志类型和对应的文件，可在下方进行注册
 LOG_PREFIXES = {
     "checkpoint": "checkpoint",
     "pass": "api_config_pass",
@@ -26,6 +26,7 @@ LOG_PREFIXES = {
     "timeout": "api_config_timeout",
     "crash": "api_config_crash",
     "oom": "api_config_oom",
+    "match_error": "api_config_match_error",
 }
 
 _is_engineV2 = False
