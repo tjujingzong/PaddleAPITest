@@ -16,6 +16,7 @@ SKIP_ERROR_INFO = [
     "CUDA out of memory",
     "Out of memory error",
     "[Skip]",
+    "[match error]",
     "[numpy error]",
     "[paddle_to_torch]",
     "[torch error]",

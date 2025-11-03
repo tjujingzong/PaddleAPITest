@@ -4,23 +4,29 @@
 
 1. 建议在虚拟环境或 docker 中进行开发，并正确安装 python 与 nvidia 驱动，engineV2 建议使用 **python>=3.10**
 
-2. PaddlePaddle 与 PyTorch 的部分依赖项可能发生冲突，请先安装 **paddlepaddle-gpu** 再安装 **torch**，重新安装请添加 `--force-reinstall` 参数
+2. 克隆本仓库
 
-3. 安装 paddlepaddle-gpu
+    ```bash
+    git clone https://github.com/PFCCLab/PaddleAPITest.git
+    cd PaddleAPITest
+    ```
+
+3. 安装 paddlepaddle-gpu 与 torch
 
    - [使用 pip 快速安装 paddle](https://www.paddlepaddle.org.cn/install/quick?docurl=/documentation/docs/zh/develop/install/pip/linux-pip.html)，或者运行命令 (cuda>=11.8):
    ```bash
    pip install --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu118/
    ```
-   - 若需要本地编译 Paddle，可参考：[Linux 下使用 ninja 从源码编译](https://www.paddlepaddle.org.cn/documentation/docs/zh/develop/install/compile/linux-compile-by-ninja.html)
 
-4. 安装 torch
-
-   - [使用 pip 快速安装 torch](https://pytorch.org/get-started/locally/)，或者运行命令 (cuda>=11.8):
+    - [使用 pip 快速安装 torch](https://pytorch.org/get-started/locally/)，或者运行命令 (cuda>=11.8):
    ```bash
    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
    ```
-5. 安装第三方库
+
+   - 若需要本地编译 Paddle，可参考：[Linux 下使用 ninja 从源码编译](https://www.paddlepaddle.org.cn/documentation/docs/zh/develop/install/compile/linux-compile-by-ninja.html)
+   - PaddlePaddle 与 PyTorch 的部分依赖项可能发生冲突，请先安装 **paddlepaddle-gpu** 再安装 **torch**，重新安装请添加 `--force-reinstall` 参数
+
+4. 安装第三方库
 
    ```bash
    pip install pandas pebble pynvml pyyaml
@@ -36,7 +42,7 @@ big tensor 的配置集位于：`tester/api_config/8_big_tensor/big_tensor_merge
 
 `run-example.sh` 是与 engineV2 配套的执行脚本，可以方便地修改测试参数并执行测试
 
-复制 `run-example.sh`，重命名为 `run_cinn.sh` (也可直接使用 `test_pipline/CINN/run_cinn.sh` )
+复制 `run-example.sh`，重命名为 `run_cinn.sh` (可直接使用 `test_pipline/CINN/run_cinn.sh` )
 ```bash
 cp run-example.sh run_cinn.sh
 ```
@@ -123,7 +129,7 @@ exit 0
 ```
 
 > [!NOTE]
-> --paddle_cinn 模式默认不测试反向，如果要开启反向测试，请打开 --test_backward 参数
+> `--paddle_cinn` 模式默认不测试反向，如果要开启反向测试，请打开 `--test_backward` 参数
 
 ### 4. 执行测试
 
@@ -134,7 +140,7 @@ exit 0
 # test_pipline/CINN/run_cinn.sh
 ```
 
-或者直接执行以下命令：（建议使用 nohup 避免终端终止时停止主进程）
+或者直接执行以下命令（建议使用 nohup 避免终端终止时停止主进程）：
 ```bash
 python engineV2.py --api_config_file="tester/api_config/8_big_tensor/big_tensor_merged.txt" --paddle_cinn=True --num_gpus=-1 --log_dir="tester/api_config/test_log_cinn" >> "tester/api_config/test_log_cinn/log.log" 2>&1
 ```
@@ -147,7 +153,7 @@ python engineV2.py --api_config_file="tester/api_config/8_big_tensor/big_tensor_
 
 ### 5. 继续测试
 
-apitest 拥有检查点 checkpoint 机制，保存了所有已经测试过的配置。若希望中止测试，可直接杀死主进程；若希望继续测试，可直接重新运行脚本，无需重新测试已经测过的配置，**切勿删除测试结果目录**
+PaddleAPITest 拥有检查点 checkpoint 机制，保存了所有已经测试过的配置。若希望中止测试，可直接杀死主进程；若希望继续测试，可直接重新运行脚本，无需重新测试已经测过的配置，**切勿删除测试结果目录**
 
 若存在 skip、oom、crash、timeout 等异常配置，且希望重新测试它们，可使用 `tools/retest_remover.py` 小工具：
 ```bash
@@ -158,16 +164,17 @@ python tools/retest_remover.py -p tester/api_config/test_log_cinn -r skip oom
 
 ### 6. 整理测试结果
 
-若需要整理出具 error 报告，可使用 `tools/error_stat/error_stat_big_tensor.py` 小工具：
+若需要整理出具 error 报告，可使用 `tools/error_stat/error_stat.py` 小工具：
 ```bash
-python tools/error_stat/error_stat_big_tensor.py -i tester/api_config/test_log_cinn
+python tools/error_stat/error_stat.py -i tester/api_config/test_log_cinn -o tester/api_config/test_log_cinn_filtered -s
 ```
 
-即可在原测试结果目录中生成以下文件：
-- `error_api.txt`
-- `error_config.txt`
-- `error_log.log`
-- `pass_api.txt`
-- `pass_config.txt`
-- `pass_log.log`
-- `invalid_config.txt`
+即可在输出目录中生成以下文件（* 代表配置集前缀，如 pass、paddle_error、crash）
+- 有效配置
+  - `*_api.txt`
+  - `*_config.txt`
+  - `*_log.log`
+- 无效配置
+  - `invalid_*_api.txt`
+  - `invalid_*_config.txt`
+  - `invalid_*_log.txt`
