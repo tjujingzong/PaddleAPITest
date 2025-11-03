@@ -83,8 +83,8 @@
 | `--test_tol`                     | bool  | 启用精度误差容忍度范围测试，仅在启用 `--accuracy` 时有效（默认 False）                 |
 | `--test_backward`                | bool  | 启用反向测试，仅在启用 `--paddle_cinn` 时有效（默认 False）                            |
 | `--timeout`                      | int   | 单个测试用例执行超时秒数（默认 1800）                                                  |
-| `--show_runtime_status`                | bool  | 是否实时显示当前的测试进度（默认 True）                            |
-| `--random_seed`                      | int   | numpy random的随机种子                                                  |
+| `--show_runtime_status`          | bool  | 是否实时显示当前的测试进度（默认 True）                            |
+| `--random_seed`                  | int   | numpy random的随机种子                                                  |
 
 
 ### 示例命令
