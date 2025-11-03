@@ -481,7 +481,7 @@ def main():
         "--random_seed",
         type=int,
         default=0,
-        help="Timeout setting for a single test case, in seconds",
+        help="The numpy random seed ",
     )
     
     options = parser.parse_args()
