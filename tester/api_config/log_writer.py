@@ -178,11 +178,11 @@ def aggregate_logs(end=False):
                             if not lines:
                                 break
                             for line in lines:
-                                if len(line) > 10000:  # 如果行长度超过10000字节，截断
+                                if len(line) > 200000:  # 如果行长度超过200000字节,截断
                                     print(
                                         f"Truncating long line ({len(line)} bytes) in {file_path.name}"
                                     )
-                                    out_f.write(line[:10000] + b"\n")
+                                    out_f.write(line[:200000] + b"\n")
                                 else:
                                     out_f.write(line)
                 except Exception as err:
