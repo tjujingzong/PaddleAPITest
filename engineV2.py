@@ -330,30 +330,30 @@ def run_test_case(api_config_str, options):
         f"{datetime.now()} GPU {gpu_id} {os.getpid()} test begin: {api_config_str}",
         flush=True,
     )
+    if not is_xpu_env():
+        pynvml.nvmlInit()
+    try:
+        while True:
+            try:
+                total_memory, used_memory = get_memory_info(gpu_id)
+                free_memory = total_memory - used_memory
+                
+                if free_memory >= options.required_memory:
+                    break
 
-    while True:
-        try:
-            if is_xpu_env():
-                total_memory, used_memory = get_xpu_memory_gb_for_id(gpu_id)
-            else:
-                total_memory, used_memory = get_nvidia_memory_gb_for_id(gpu_id)
-            
-            free_memory = total_memory - used_memory
-            
-            if free_memory >= options.required_memory:
-                break
-
-            print(
-                f"{datetime.now()} Device {gpu_id} Free: {free_memory:.1f} GB, "
-                f"Required: {options.required_memory:.1f} GB. ",
-                "Waiting for available memory...",
-                flush=True,
-            )
-            time.sleep(60)
-        except Exception as e:
-            print(f"[WARNING] Failed to check device memory: {str(e)}", flush=True)
-            time.sleep(60)
-
+                print(
+                    f"{datetime.now()} Device {gpu_id} Free: {free_memory:.1f} GB, "
+                    f"Required: {options.required_memory:.1f} GB. ",
+                    "Waiting for available memory...",
+                    flush=True,
+                )
+                time.sleep(60)
+            except Exception as e:
+                print(f"[WARNING] Failed to check device memory: {str(e)}", flush=True)
+                time.sleep(60)
+    finally:
+        if not is_xpu_env():
+            pynvml.nvmlShutdown()
     try:
         api_config = APIConfig(api_config_str)
     except Exception as err:
