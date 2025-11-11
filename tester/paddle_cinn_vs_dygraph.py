@@ -2,7 +2,7 @@ import paddle
 from paddle.jit import to_static
 
 from .api_config.log_writer import write_to_log
-from .base import APITestBase, CUDA_ERRORS
+from .base import APITestBase, CUDA_ERROR, CUDA_OOM
 
 
 class APITestCINNVSDygraph(APITestBase):
@@ -63,13 +63,23 @@ class APITestCINNVSDygraph(APITestBase):
                 print(f"[Pass] {self.api_config.config}", flush=True)
                 write_to_log("pass", self.api_config.config)
                 return
+            if any(cuda_err in str(err) for cuda_err in CUDA_ERROR):
+                print(
+                    f"[cuda error] dynamic forward {self.api_config.config}\n{str(err)}",
+                )
+                write_to_log("cuda_error", self.api_config.config)
+                raise
+            if any(cuda_err in str(err) for cuda_err in CUDA_OOM):
+                print(
+                    f"[oom] dynamic forward {self.api_config.config}\n{str(err)}",
+                )
+                write_to_log("oom", self.api_config.config)
+                raise
             print(
                 f"[paddle error] dynamic forward {self.api_config.config}\n{str(err)}",
                 flush=True,
             )
             write_to_log("paddle_error", self.api_config.config)
-            if any(cuda_err in str(err) for cuda_err in CUDA_ERRORS):
-                raise
             return
 
         try:
@@ -79,8 +89,8 @@ class APITestCINNVSDygraph(APITestBase):
                 f"[cuda error] dynamic forward {self.api_config.config}\n{str(err)}",
                 flush=True,
             )
-            write_to_log("paddle_error", self.api_config.config)
-            return
+            write_to_log("cuda_error", self.api_config.config)
+            raise
 
         need_check_grad = self.test_backward and self.need_check_grad()
         if need_check_grad:
@@ -114,13 +124,25 @@ class APITestCINNVSDygraph(APITestBase):
                     print(f"[Pass] {self.api_config.config}", flush=True)
                     write_to_log("pass", self.api_config.config)
                     return
+                if any(cuda_err in str(err) for cuda_err in CUDA_ERROR):
+                    print(
+                        f"[cuda error] dynamic backward {self.api_config.config}\n{str(err)}",
+                        flush=True,
+                    )
+                    write_to_log("cuda_error", self.api_config.config)
+                    raise
+                if any(cuda_err in str(err) for cuda_err in CUDA_OOM):
+                    print(
+                        f"[oom] dynamic backward {self.api_config.config}\n{str(err)}",
+                        flush=True,
+                    )
+                    write_to_log("oom", self.api_config.config)
+                    raise
                 print(
                     f"[paddle error] dynamic backward {self.api_config.config}\n{str(err)}",
                     flush=True,
                 )
                 write_to_log("paddle_error", self.api_config.config)
-                if any(cuda_err in str(err) for cuda_err in CUDA_ERRORS):
-                    raise
                 return
 
             try:
@@ -130,7 +152,7 @@ class APITestCINNVSDygraph(APITestBase):
                     f"[cuda error] dynamic backward {self.api_config.config}\n{str(err)}",
                     flush=True,
                 )
-                write_to_log("paddle_error", self.api_config.config)
+                write_to_log("cuda_error", self.api_config.config)
                 raise
 
         try:
@@ -224,13 +246,23 @@ class APITestCINNVSDygraph(APITestBase):
                 print(f"[Pass] {self.api_config.config}", flush=True)
                 write_to_log("pass", self.api_config.config)
                 return
+            if any(cuda_err in str(err) for cuda_err in CUDA_ERROR):
+                print(
+                    f"[cuda error] static {self.api_config.config}\n{str(err)}",
+                )
+                write_to_log("cuda_error", self.api_config.config)
+                raise
+            if any(cuda_err in str(err) for cuda_err in CUDA_OOM):
+                print(
+                    f"[oom] static {self.api_config.config}\n{str(err)}",
+                )
+                write_to_log("oom", self.api_config.config)
+                raise
             print(
                 f"[paddle error] static {self.api_config.config}\n{str(err)}",
                 flush=True,
             )
             write_to_log("paddle_error", self.api_config.config)
-            if any(cuda_err in str(err) for cuda_err in CUDA_ERRORS):
-                raise
             return
 
         try:
@@ -240,7 +272,7 @@ class APITestCINNVSDygraph(APITestBase):
                 f"[cuda error] static {self.api_config.config}\n{str(err)}",
                 flush=True,
             )
-            write_to_log("paddle_error", self.api_config.config)
+            write_to_log("cuda_error", self.api_config.config)
             raise
 
         if not self.compare(dynamic_fwd_output, static_fwd_output):

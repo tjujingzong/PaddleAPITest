@@ -27,6 +27,7 @@ LOG_PREFIXES = {
     "crash": "api_config_crash",
     "oom": "api_config_oom",
     "match_error": "api_config_match_error",
+    "cuda_error": "api_config_cuda_error",
 }
 
 _is_engineV2 = False
@@ -355,8 +356,28 @@ def aggregate_logs(end=False):
 def print_log_info(all_case, log_counts={}):
     """打印日志统计信息"""
     test_case = log_counts.get("checkpoint", 0)
-    fail_case = log_counts.get("crash", 0) + log_counts.get("timeout", 0)
-    skip_case = log_counts.get("skip", 0)
+    pass_case = log_counts.get("pass", 0)
+    fail_case = sum(
+        log_counts.get(log_type, 0)
+        for log_type in [
+            "paddle_error",
+            "accuracy_error",
+            "accuracy_diff",
+            "timeout",
+            "crash",
+            "oom",
+            "cuda_error",
+        ]
+    )
+    skip_case = sum(
+        log_counts.get(log_type, 0)
+        for log_type in [
+            "numpy_error",
+            "torch_error",
+            "paddle_to_torch_failed",
+            "match_error",
+        ]
+    )
 
     # 打印统计信息
     print("\n" + "=" * 50)
@@ -364,6 +385,7 @@ def print_log_info(all_case, log_counts={}):
     print("=" * 50)
     print(f"{'Total cases':<30}: {all_case}")
     print(f"{'Tested cases':<30}: {test_case}")
+    print(f"{'Passed cases':<30}: {pass_case}")
     print(f"{'Failed cases':<30}: {fail_case}")
     print(f"{'Skipped cases':<30}: {skip_case}")
     if log_counts:

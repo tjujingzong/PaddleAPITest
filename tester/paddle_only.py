@@ -1,9 +1,11 @@
 
 import paddle
-#from func_timeout import func_set_timeout
 
 from .api_config.log_writer import write_to_log
-from .base import APITestBase
+from .base import CUDA_ERROR, CUDA_OOM, APITestBase
+
+#from func_timeout import func_set_timeout
+
 
 
 class APITestPaddleOnly(APITestBase):
@@ -15,7 +17,7 @@ class APITestPaddleOnly(APITestBase):
     def test(self):
         
         if self.need_skip(paddle_only=True):
-            print("[Skip]", flush=True)
+            print(f"[Skip] {self.api_config.config}", flush=True)
             return
 
         if not self.ana_paddle_api_info():
@@ -24,10 +26,10 @@ class APITestPaddleOnly(APITestBase):
 
         try:
             if not self.gen_numpy_input():
-                print("gen_numpy_input failed")
+                print("gen_numpy_input failed", flush=True)
                 return
         except Exception as err:
-            print("[numpy error]", self.api_config.config, "\n", str(err))
+            print(f"[numpy error] {self.api_config.config}\n{str(err)}", flush=True)
             write_to_log("numpy_error", self.api_config.config)
             return
 
@@ -51,32 +53,36 @@ class APITestPaddleOnly(APITestBase):
             result_outputs_grads = None
             out_grads = None
             if self.should_ignore_paddle_error(str(err)):
-                print("[Pass]", self.api_config.config, flush=True)
+                print(f"[Pass] {self.api_config.config}", flush=True)
                 write_to_log("pass", self.api_config.config)
                 return
-            if "gradient_accumulator.cc" in str(err) or "Out of memory" in str(err):
-                return
-            print("[paddle error]", self.api_config.config, "\n", str(err), flush=True)
+            if any(cuda_err in str(err) for cuda_err in CUDA_ERROR):
+                print(f"[cuda error] {self.api_config.config}\n{str(err)}", flush=True)
+                write_to_log("cuda_error", self.api_config.config)
+                raise
+            if any(cuda_err in str(err) for cuda_err in CUDA_OOM):
+                print(f"[oom] {self.api_config.config}\n{str(err)}", flush=True)
+                write_to_log("oom", self.api_config.config)
+                raise
+            print(f"[paddle error] {self.api_config.config}\n{str(err)}", flush=True)
             write_to_log("paddle_error", self.api_config.config)
-            if "CUDA error" in str(err) or "memory corruption" in str(err):
-                raise Exception(err)
             return
 
         try:
             paddle.base.core.eager._for_test_check_cuda_error()
         except Exception as err:
-            print("[cuda error]", self.api_config.config, "\n", str(err), flush=True)
             paddle_output = None
             result_outputs = None
             result_outputs_grads = None
             out_grads = None
-            write_to_log("paddle_error", self.api_config.config)
-            return
+            print(f"[cuda error] {self.api_config.config}\n{str(err)}", flush=True)
+            write_to_log("cuda_error", self.api_config.config)
+            raise
 
         paddle_output = None
         result_outputs = None
         result_outputs_grads = None
         out_grads = None
-        print("[Pass]", self.api_config.config, flush=True)
+        print(f"[Pass] {self.api_config.config}", flush=True)
         write_to_log("pass", self.api_config.config)
   

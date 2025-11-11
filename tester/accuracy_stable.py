@@ -1,13 +1,13 @@
 import traceback
 
+import numpy
 import paddle
 import torch
-import numpy
 
+from .accuracy import process_grad_output, process_output
 from .api_config.log_writer import log_accuracy_stable, write_to_log
-from .base import APITestBase, CUDA_ERRORS
+from .base import CUDA_ERROR, CUDA_OOM, APITestBase
 from .paddle_to_torch import get_converter
-from .accuracy import process_output, process_grad_output
 
 
 class APITestAccuracyStable(APITestBase):
@@ -155,7 +155,9 @@ class APITestAccuracyStable(APITestBase):
             print(f"[torch error] {self.api_config.config}\n{err_str}", flush=True)
             traceback.print_exc()
             write_to_log("torch_error", self.api_config.config)
-            if any(cuda_err in err_str for cuda_err in CUDA_ERRORS):
+            if any(cuda_err in err_str for cuda_err in CUDA_ERROR) or any(
+                cuda_err in err_str for cuda_err in CUDA_OOM
+            ):
                 raise
             return None, None, None
 
@@ -184,9 +186,17 @@ class APITestAccuracyStable(APITestBase):
                     )
                     write_to_log("numpy_error", self.api_config.config)
                     return None, None, None
-                print(err_str, flush=True)
-                if any(cuda_err in err_str for cuda_err in CUDA_ERRORS):
+                # some torch backward error can be tolerable, so we catch cuda error here
+                if any(cuda_err in err_str for cuda_err in CUDA_ERROR) or any(
+                    cuda_err in err_str for cuda_err in CUDA_OOM
+                ):
+                    print(
+                        f"[torch error] backward {self.api_config.config}\n{err_str}",
+                        flush=True,
+                    )
+                    write_to_log("torch_error", self.api_config.config)
                     raise
+                print(err_str, flush=True)
 
             try:
                 paddle.base.core.eager._for_test_check_cuda_error()
@@ -269,18 +279,24 @@ class APITestAccuracyStable(APITestBase):
                 print(f"[Pass] {self.api_config.config}", flush=True)
                 write_to_log("pass", self.api_config.config)
                 return None, None
+            if any(cuda_err in err_str for cuda_err in CUDA_ERROR):
+                print(f"[cuda error] {self.api_config.config}\n{err_str}", flush=True)
+                write_to_log("cuda_error", self.api_config.config)
+                raise
+            if any(cuda_err in err_str for cuda_err in CUDA_OOM):
+                print(f"[oom] {self.api_config.config}\n{err_str}", flush=True)
+                write_to_log("oom", self.api_config.config)
+                raise
             print(f"[paddle error] {self.api_config.config}\n{err_str}", flush=True)
             traceback.print_exc()
             write_to_log("paddle_error", self.api_config.config)
-            if any(cuda_err in err_str for cuda_err in CUDA_ERRORS):
-                raise
             return None, None
 
         try:
             paddle.base.core.eager._for_test_check_cuda_error()
         except Exception as err:
             print(f"[cuda error] {self.api_config.config}\n{str(err)}", flush=True)
-            write_to_log("paddle_error", self.api_config.config)
+            write_to_log("cuda_error", self.api_config.config)
             raise
 
         # ======== run paddle backward ========
@@ -311,14 +327,25 @@ class APITestAccuracyStable(APITestBase):
                     print(f"[Pass] {self.api_config.config}", flush=True)
                     write_to_log("pass", self.api_config.config)
                     return None, None
+                if any(cuda_err in err_str for cuda_err in CUDA_ERROR):
+                    print(
+                        f"[cuda error] backward {self.api_config.config}\n{err_str}",
+                    )
+                    write_to_log("cuda_error", self.api_config.config)
+                    raise
+                if any(cuda_err in err_str for cuda_err in CUDA_OOM):
+                    print(
+                        f"[oom] backward {self.api_config.config}\n{err_str}",
+                        flush=True,
+                    )
+                    write_to_log("oom", self.api_config.config)
+                    raise
                 print(
                     f"[paddle error] backward {self.api_config.config}\n{err_str}",
                     flush=True,
                 )
                 traceback.print_exc()
                 write_to_log("paddle_error", self.api_config.config)
-                if any(cuda_err in err_str for cuda_err in CUDA_ERRORS):
-                    raise
                 return None, None
 
             try:
@@ -328,7 +355,7 @@ class APITestAccuracyStable(APITestBase):
                     f"[cuda error] backward {self.api_config.config}\n{str(err)}",
                     flush=True,
                 )
-                write_to_log("paddle_error", self.api_config.config)
+                write_to_log("cuda_error", self.api_config.config)
                 raise
 
         def process_paddle_outputs(obj):

@@ -27,10 +27,15 @@ with open("tester/api_config/torch_error_skip.txt", "r") as f:
 
 del config
 
-CUDA_ERRORS = frozenset(
+CUDA_ERROR = frozenset(
     [
         "CUDA error",
         "memory corruption",
+    ]
+)
+
+CUDA_OOM = frozenset(
+    [
         "CUDA out of memory",
         "Out of memory error",
     ]

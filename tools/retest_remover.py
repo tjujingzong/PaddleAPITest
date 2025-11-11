@@ -1,23 +1,25 @@
 # 重测配置移除小工具
 # @author: cangtianhuang
-# @date: 2025-06-08
+# @date: 2025-11-11
 
 import argparse
 import os
 from pathlib import Path
 
 LOG_PREFIXES = {
+    "checkpoint": "checkpoint",
     "pass": "api_config_pass",
-    "numpy_error": "api_config_numpy_error",
-    "paddle_error": "api_config_paddle_error",
-    "torch_error": "api_config_torch_error",
-    "paddle_to_torch_failed": "api_config_paddle_to_torch_failed",
-    "accuracy_error": "api_config_accuracy_error",
-    "accuracy_diff": "api_config_accuracy_diff",
-    "timeout": "api_config_timeout",
     "crash": "api_config_crash",
     "oom": "api_config_oom",
+    "timeout": "api_config_timeout",
+    "paddle_error": "api_config_paddle_error",
+    "accuracy_error": "api_config_accuracy_error",
+    "accuracy_diff": "api_config_accuracy_diff",
+    "torch_error": "api_config_torch_error",
+    "paddle_to_torch_failed": "api_config_paddle_to_torch_failed",
     "match_error": "api_config_match_error",
+    "numpy_error": "api_config_numpy_error",
+    "cuda_error": "api_config_cuda_error",
 }
 
 

@@ -1,6 +1,6 @@
 # test_log 一键整理小工具
 # @author: cangtianhuang
-# @date: 2025-11-03
+# @date: 2025-11-11
 # 整理效果：pass + error + invalid （可按类型拆分）
 
 import argparse
@@ -36,6 +36,7 @@ LOG_PREFIXES = {
     "paddle_to_torch_failed": "api_config_paddle_to_torch_failed",
     "match_error": "api_config_match_error",
     "numpy_error": "api_config_numpy_error",
+    "cuda_error": "api_config_cuda_error",
 }
 
 
