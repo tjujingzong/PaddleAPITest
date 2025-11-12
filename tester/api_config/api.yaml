@@ -78,7 +78,6 @@ apis:
  - paddle.Tensor.bitwise_or
  - paddle.Tensor.bitwise_right_shift
  - paddle.Tensor.bitwise_xor
- - paddle.Tensor.block
  - paddle.Tensor.block_diag
  - paddle.Tensor.bmm
  - paddle.Tensor.broadcast_shape
@@ -194,7 +193,6 @@ apis:
  - paddle.Tensor.item
  - paddle.Tensor.kron
  - paddle.Tensor.kthvalue
- - paddle.Tensor.layout
  - paddle.Tensor.lcm
  - paddle.Tensor.ldexp
  - paddle.Tensor.lerp
@@ -234,7 +232,6 @@ apis:
  - paddle.Tensor.mod
  - paddle.Tensor.mode
  - paddle.Tensor.moveaxis
- - paddle.Tensor.mT
  - paddle.Tensor.multi_dot
  - paddle.Tensor.multigammaln
  - paddle.Tensor.multinomial
@@ -253,16 +250,13 @@ apis:
  - paddle.Tensor.norm
  - paddle.Tensor.normal_
  - paddle.Tensor.not_equal
- - paddle.Tensor.num_shard
  - paddle.Tensor.ormqr
  - paddle.Tensor.outer
  - paddle.Tensor.pca_lowrank
- - paddle.Tensor.persistable
  - paddle.Tensor.pinv
  - paddle.Tensor.polar
  - paddle.Tensor.polygamma
  - paddle.Tensor.pow
- - paddle.Tensor.process_mesh
  - paddle.Tensor.prod
  - paddle.Tensor.put_along_axis
  - paddle.Tensor.qr
@@ -287,7 +281,6 @@ apis:
  - paddle.Tensor.scatter_nd
  - paddle.Tensor.scatter_nd_add
  - paddle.Tensor.select_scatter
- - paddle.Tensor.set_
  - paddle.Tensor.sgn
  - paddle.Tensor.shard_index
  - paddle.Tensor.sigmoid
@@ -296,7 +289,6 @@ apis:
  - paddle.Tensor.sin
  - paddle.Tensor.sinc
  - paddle.Tensor.sinh
- - paddle.Tensor.size
  - paddle.Tensor.slice
  - paddle.Tensor.slice_scatter
  - paddle.Tensor.solve
@@ -329,7 +321,6 @@ apis:
  - paddle.Tensor.tril
  - paddle.Tensor.triu
  - paddle.Tensor.trunc
- - paddle.Tensor.type
  - paddle.Tensor.unbind
  - paddle.Tensor.unflatten
  - paddle.Tensor.unfold
@@ -955,3 +946,4 @@ apis:
  - paddle.where
  - paddle.zeros
  - paddle.zeros_like
+ - paddle._C_ops._run_custom_op
