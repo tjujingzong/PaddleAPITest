@@ -427,7 +427,6 @@ apis:
  - paddle.dot
  - paddle.dsplit
  - paddle.dstack
- - paddle.e
  - paddle.einsum
  - paddle.empty
  - paddle.empty_like
@@ -517,7 +516,6 @@ apis:
  - paddle.incubate.nn.functional.fused_linear
  - paddle.incubate.nn.functional.fused_linear_activation
  - paddle.incubate.nn.functional.fused_matmul_bias
- - paddle.incubate.nn.functional.fused_moe
  - paddle.incubate.nn.functional.fused_multi_head_attention
  - paddle.incubate.nn.functional.fused_multi_transformer
  - paddle.incubate.nn.functional.fused_rms_norm
@@ -536,7 +534,6 @@ apis:
  - paddle.index_put
  - paddle.index_sample
  - paddle.index_select
- - paddle.inf
  - paddle.inner
  - paddle.is_complex
  - paddle.is_empty
@@ -631,7 +628,6 @@ apis:
  - paddle.multiplex
  - paddle.multiply
  - paddle.mv
- - paddle.nan
  - paddle.nan_to_num
  - paddle.nanmean
  - paddle.nanmedian
@@ -782,7 +778,6 @@ apis:
  - paddle.onnx.export
  - paddle.outer
  - paddle.pdist
- - paddle.pi
  - paddle.poisson
  - paddle.polar
  - paddle.polygamma
