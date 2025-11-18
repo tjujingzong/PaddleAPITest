@@ -6,8 +6,8 @@
 # 配置参数
 # NUM_GPUS!=0 时，engineV2 不受外部 "CUDA_VISIBLE_DEVICES" 影响
 # FILE_INPUT="tester/api_config/5_accuracy/accuracy_1.txt"
-FILE_PATTERN="tester/api_config/5_accuracy/accuracy_*.txt"
-#FILE_PATTERN="tester/api_config/monitor_config/accuracy/GPU/monitoring_configs*.txt"
+# FILE_PATTERN="tester/api_config/5_accuracy/accuracy_*.txt"
+FILE_PATTERN="tester/api_config/monitor_config/accuracy/GPU/monitoring_configs*.txt"
 LOG_DIR="tester/api_config/test_log_gpu_accuracy_full"
 NUM_GPUS=-1
 NUM_WORKERS_PER_GPU=-1
