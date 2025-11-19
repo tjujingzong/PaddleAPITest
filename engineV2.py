@@ -707,13 +707,13 @@ def main():
                     config = futures[future]
                     try:
                         tested_case += 1
-                        if options.show_runtime_status:
+                        if options.show_runtime_status or tested_case % 10000 == 0:
                             print(
                                 f"[{tested_case}/{all_case}] Testing {config}",
                                 flush=True,
                             )
                         future.result()
-                        if options.show_runtime_status:
+                        if options.show_runtime_status or tested_case % 10000 == 0:
                             print(
                                 f"[info] Test case succeeded for {config}", flush=True
                             )
