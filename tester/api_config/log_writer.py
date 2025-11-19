@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 import pandas as pd
+import errno
 
 # 日志文件路径
 DIR_PATH = Path(__file__).resolve()
@@ -69,6 +70,15 @@ def close_process_files():
     global _process_file_handlers
     for handler in _process_file_handlers.values():
         try:
+            if handler.closed:  
+                continue  
+            try:  
+                fd = handler.fileno()  
+                os.fstat(fd)
+            except OSError as e:
+                if e.errno == errno.EBADF:
+                    continue
+                raise
             handler.close()
         except Exception as err:
             print(f"Error closing process file: {err}", flush=True)

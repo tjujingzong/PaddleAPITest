@@ -10,6 +10,7 @@ from concurrent.futures import TimeoutError, as_completed
 from datetime import datetime
 from multiprocessing import Lock, Manager, cpu_count, set_start_method
 from typing import TYPE_CHECKING
+import subprocess
 
 import numpy as np
 import pynvml
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
         APITestTorchGPUPerformance,
         APITestPaddleTorchGPUPerformance,
         APITestAccuracyStable,
+        APITestCustomDeviceVSCPU,
     )
     import torch
     import paddle
@@ -76,14 +78,50 @@ def estimate_timeout(api_config) -> float:
     # return TIMEOUT_STEPS[-1][1]
     return 1800
 
+def get_device_type() -> str:
+    """Detect the current device type (gpu, xpu, or cpu)."""
+    if shutil.which("nvidia-smi"):
+        try:
+            out = subprocess.check_output(["nvidia-smi", "-L"], text=True)
+            if any(line.strip().startswith("GPU ") for line in out.splitlines()):
+                return "gpu"
+        except Exception:
+            pass
+    if shutil.which("xpu-smi"):
+        try:
+            out = subprocess.check_output(["xpu-smi"], text=True, stderr=subprocess.STDOUT)
+            if any(re.match(r"^\|\s*\d+\s+\S", line) for line in out.splitlines()):
+                return "xpu"
+        except Exception:
+            pass
+    return "cpu"
+
+def get_device_count() -> int:
+    """Get the number of available devices (GPUs or XPUs)."""
+    device_type = get_device_type()
+    
+    if device_type == "xpu":
+        out = subprocess.check_output(["xpu-smi"], text=True, stderr=subprocess.STDOUT)
+        ids = set()
+        for line in out.splitlines():
+            if "Processes:" in line:
+                break
+            m = re.match(r"^\|\s*(\d+)\s+\S", line)
+            if m:
+                ids.add(int(m.group(1)))
+        return len(ids)
+    elif device_type == "gpu":
+        out = subprocess.check_output(["nvidia-smi", "-L"], text=True)
+        return sum(1 for l in out.splitlines() if l.startswith("GPU "))
+    
+    return 0
+
 
 def validate_gpu_options(options) -> tuple:
     """Validate and normalize GPU-related options."""
-    pynvml.nvmlInit()
-    device_count = pynvml.nvmlDeviceGetCount()
-    pynvml.nvmlShutdown()
+    device_count = get_device_count()
     if device_count == 0:
-        raise ValueError("No GPUs found")
+        raise ValueError("No devices found")
     if options.gpu_ids:
         try:
             gpu_ids = []
@@ -144,6 +182,32 @@ def parse_bool(value):
     else:
         raise ValueError(f"Invalid boolean value: {value} parsed from command line")
 
+def get_memory_info(gpu_id):
+    """Return (total_memory, used_memory) in GB for GPU (NVIDIA) or XPU."""
+    device_type = get_device_type()
+    if device_type == "gpu":
+        pynvml.nvmlInit()
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
+            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            return int(mem_info.total) / (1024**3), int(mem_info.used) / (1024**3)
+        finally:
+            pynvml.nvmlShutdown()
+    elif device_type == "xpu":
+        out = subprocess.check_output(["xpu-smi"], text=True, stderr=subprocess.STDOUT)
+        lines = out.splitlines()
+        for i, line in enumerate(lines):
+            if re.match(rf"^\|\s*{gpu_id}\s+\S", line):
+                for j in range(i + 1, min(i + 5, len(lines))):
+                    m = re.search(r"(\d+)\s*MiB\s*/\s*(\d+)\s*MiB", lines[j])
+                    if m:
+                        used_mib = int(m.group(1))
+                        total_mib = int(m.group(2))
+                        return total_mib / 1024.0, used_mib / 1024.0
+                break
+        raise RuntimeError(f"Failed to parse xpu-smi memory for device {gpu_id}")
+    else:
+        raise RuntimeError("Neither NVIDIA GPU nor XPU environment detected.")
 
 def check_gpu_memory(
     gpu_ids, num_workers_per_gpu, required_memory
@@ -151,32 +215,23 @@ def check_gpu_memory(
     assert isinstance(gpu_ids, tuple) and len(gpu_ids) > 0
     available_gpus = []
     max_workers_per_gpu = {}
+    
+    for gpu_id in gpu_ids:
+        try:
+            total_memory, used_memory = get_memory_info(gpu_id)
+            free_memory = total_memory - used_memory
+            max_workers = int(free_memory // required_memory)
 
-    pynvml.nvmlInit()
-    try:
-        for gpu_id in gpu_ids:
-            try:
-                handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
-                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-
-                total_memory = int(mem_info.total) / (1024**3)  # Bytes to GB
-                used_memory = int(mem_info.used) / (1024**3)  # Bytes to GB
-                free_memory = total_memory - used_memory
-
-                max_workers = int(free_memory // required_memory)
-                if max_workers >= 1:
-                    available_gpus.append(gpu_id)
-                    max_workers_per_gpu[gpu_id] = (
-                        max_workers
-                        if num_workers_per_gpu == -1
-                        else min(max_workers, num_workers_per_gpu)
-                    )
-            except pynvml.NVMLError as e:
-                print(f"[WARNING] Failed to check GPU {gpu_id}: {str(e)}", flush=True)
-                continue
-
-    finally:
-        pynvml.nvmlShutdown()
+            if max_workers >= 1:
+                available_gpus.append(gpu_id)
+                max_workers_per_gpu[gpu_id] = (
+                    max_workers
+                    if num_workers_per_gpu == -1
+                    else min(max_workers, num_workers_per_gpu)
+                )
+        except Exception as e:
+            print(f"[WARNING] Failed to check device {gpu_id}: {str(e)}", flush=True)
+            continue
 
     return available_gpus, max_workers_per_gpu
 
@@ -216,31 +271,52 @@ def init_worker_gpu(
         os.environ["CUDA_VISIBLE_DEVICES"] = str(assigned_gpu)
 
         import paddle
-        import torch
+        
+        try:
+            import torch
+            globals()["torch"] = torch
+        except ImportError:
+            print(f"{datetime.now()} Warning: torch not installed, some functionality may be limited", flush=True)
+            globals()["torch"] = None
 
-        globals()["torch"] = torch
         globals()["paddle"] = paddle
 
-        from tester import (APIConfig, APITestAccuracy, APITestAccuracyStable,
-                            APITestCINNVSDygraph, APITestPaddleGPUPerformance,
-                            APITestPaddleOnly,
-                            APITestPaddleTorchGPUPerformance,
-                            APITestTorchGPUPerformance)
-
-        test_classes = {
-            "APIConfig": APIConfig,
-            "APITestAccuracy": APITestAccuracy,
-            "APITestCINNVSDygraph": APITestCINNVSDygraph,
-            "APITestPaddleOnly": APITestPaddleOnly,
-            "APITestPaddleGPUPerformance": APITestPaddleGPUPerformance,
-            "APITestTorchGPUPerformance": APITestTorchGPUPerformance,
-            "APITestPaddleTorchGPUPerformance": APITestPaddleTorchGPUPerformance,
-            "APITestAccuracyStable": APITestAccuracyStable,
-        }
+        # Dynamically import required test classes based on options
+        from tester import APIConfig
+        
+        test_classes = {"APIConfig": APIConfig}
+        
+        # Import test classes based on options
+        if options.paddle_only:
+            from tester import APITestPaddleOnly
+            test_classes["APITestPaddleOnly"] = APITestPaddleOnly
+        elif options.paddle_cinn:
+            from tester import APITestCINNVSDygraph
+            test_classes["APITestCINNVSDygraph"] = APITestCINNVSDygraph
+        elif options.accuracy:
+            from tester import APITestAccuracy
+            test_classes["APITestAccuracy"] = APITestAccuracy
+        elif options.paddle_gpu_performance:
+            from tester import APITestPaddleGPUPerformance
+            test_classes["APITestPaddleGPUPerformance"] = APITestPaddleGPUPerformance
+        elif options.torch_gpu_performance:
+            from tester import APITestTorchGPUPerformance
+            test_classes["APITestTorchGPUPerformance"] = APITestTorchGPUPerformance
+        elif options.paddle_torch_gpu_performance:
+            from tester import APITestPaddleTorchGPUPerformance
+            test_classes["APITestPaddleTorchGPUPerformance"] = APITestPaddleTorchGPUPerformance
+        elif options.accuracy_stable:
+            from tester import APITestAccuracyStable
+            test_classes["APITestAccuracyStable"] = APITestAccuracyStable
+        elif options.paddle_custom_device:
+            from tester import APITestCustomDeviceVSCPU
+            test_classes["APITestCustomDeviceVSCPU"] = APITestCustomDeviceVSCPU
+        
         globals().update(test_classes)
 
         def signal_handler(*args):
-            torch.cuda.empty_cache()
+            if globals()["torch"] is not None:
+                torch.cuda.empty_cache()
             paddle.device.cuda.empty_cache()
             restore_stdio()
             close_process_files()
@@ -275,48 +351,70 @@ def run_test_case(api_config_str, options):
         f"{datetime.now()} GPU {gpu_id} {os.getpid()} test begin: {api_config_str}",
         flush=True,
     )
-
-    pynvml.nvmlInit()
-    try:
-        while True:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
-            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            free_memory = int(mem_info.free) / (1024**3)  # Bytes to GB
-
+    while True:
+        try:
+            total_memory, used_memory = get_memory_info(gpu_id)
+            free_memory = total_memory - used_memory
+            
             if free_memory >= options.required_memory:
                 break
 
             print(
-                f"{datetime.now()} GPU {gpu_id} Free: {free_memory:.1f} GB, "
+                f"{datetime.now()} Device {gpu_id} Free: {free_memory:.1f} GB, "
                 f"Required: {options.required_memory:.1f} GB. ",
                 "Waiting for available memory...",
                 flush=True,
             )
             time.sleep(60)
-    finally:
-        pynvml.nvmlShutdown()
-
+        except Exception as e:
+            print(f"[WARNING] Failed to check device memory: {str(e)}", flush=True)
+            time.sleep(60)
     try:
         api_config = APIConfig(api_config_str)
     except Exception as err:
         print(f"[config parse error] {api_config_str} {str(err)}", flush=True)
         return
 
-    option_to_class = {
-        "paddle_only": APITestPaddleOnly,
-        "paddle_cinn": APITestCINNVSDygraph,
-        "accuracy": APITestAccuracy,
-        "paddle_gpu_performance": APITestPaddleGPUPerformance,
-        "torch_gpu_performance": APITestTorchGPUPerformance,
-        "paddle_torch_gpu_performance": APITestPaddleTorchGPUPerformance,
-        "accuracy_stable": APITestAccuracyStable,
-    }
-    test_class = next(
-        (cls for opt, cls in option_to_class.items() if getattr(options, opt, False)),
-        APITestAccuracy,  # default fallback
-    )
-    kwargs = {k: v for k, v in vars(options).items() if k in VALID_TEST_ARGS}
-    case = test_class(api_config, **kwargs)
+    # Dynamically get the test class based on options
+    if options.paddle_only:
+        from tester import APITestPaddleOnly
+        test_class = APITestPaddleOnly
+    elif options.paddle_cinn:
+        from tester import APITestCINNVSDygraph
+        test_class = APITestCINNVSDygraph
+    elif options.accuracy:
+        from tester import APITestAccuracy
+        test_class = APITestAccuracy
+    elif options.paddle_gpu_performance:
+        from tester import APITestPaddleGPUPerformance
+        test_class = APITestPaddleGPUPerformance
+    elif options.torch_gpu_performance:
+        from tester import APITestTorchGPUPerformance
+        test_class = APITestTorchGPUPerformance
+    elif options.paddle_torch_gpu_performance:
+        from tester import APITestPaddleTorchGPUPerformance
+        test_class = APITestPaddleTorchGPUPerformance
+    elif options.accuracy_stable:
+        from tester import APITestAccuracyStable
+        test_class = APITestAccuracyStable
+    elif options.paddle_custom_device:
+        from tester import APITestCustomDeviceVSCPU
+        test_class = APITestCustomDeviceVSCPU
+    else:
+        # default fallback
+        from tester import APITestAccuracy
+        test_class = APITestAccuracy
+
+    if options.accuracy:
+        case = test_class(
+            api_config,
+            test_amp=options.test_amp,
+            atol=options.atol,
+            rtol=options.rtol,
+            test_tol=options.test_tol,
+        )
+    else:
+        case = test_class(api_config, test_amp=options.test_amp)
     try:
         case.test()
     except Exception as err:
@@ -339,7 +437,8 @@ def run_test_case(api_config_str, options):
                 "paddle_torch_gpu_performance",
             )
         ):
-            torch.cuda.empty_cache()
+            if globals()["torch"] is not None:
+                torch.cuda.empty_cache() 
             paddle.device.cuda.empty_cache()
 
 
@@ -397,6 +496,12 @@ def main():
         type=parse_bool,
         default=False,
         help="test paddle api to corespoding torch api steadily",
+    )
+    parser.add_argument(
+        "--paddle_custom_device",
+        type=parse_bool,
+        default=False,
+        help="test paddle api on custom device vs CPU",
     )
     parser.add_argument(
         "--test_amp",
@@ -498,6 +603,7 @@ def main():
         options.torch_gpu_performance,
         options.paddle_torch_gpu_performance,
         options.accuracy_stable,
+        options.paddle_custom_device,
     ]
     if len([m for m in mode if m is True]) != 1:
         print(
@@ -508,7 +614,8 @@ def main():
             "--paddle_gpu_performance,"
             "--torch_gpu_performance,"
             "--paddle_torch_gpu_performance"
-            "--accuracy_stable"
+            "--accuracy_stable,"
+            "--paddle_custom_device"
             " to True.",
             flush=True,
         )
@@ -524,12 +631,8 @@ def main():
 
     if options.api_config:
         # Single config execution
-        from tester import (APIConfig, APITestAccuracy, APITestAccuracyStable,
-                            APITestCINNVSDygraph, APITestPaddleGPUPerformance,
-                            APITestPaddleOnly,
-                            APITestPaddleTorchGPUPerformance,
-                            APITestTorchGPUPerformance)
-
+        from tester import APIConfig
+        
         # set log_writer
         set_engineV2()
 
@@ -541,23 +644,35 @@ def main():
             print(f"[config parse error] {options.api_config} {str(err)}", flush=True)
             return
 
-        option_to_class = {
-            "paddle_only": APITestPaddleOnly,
-            "paddle_cinn": APITestCINNVSDygraph,
-            "accuracy": APITestAccuracy,
-            "paddle_gpu_performance": APITestPaddleGPUPerformance,
-            "torch_gpu_performance": APITestTorchGPUPerformance,
-            "paddle_torch_gpu_performance": APITestPaddleTorchGPUPerformance,
-            "accuracy_stable": APITestAccuracyStable,
-        }
-        test_class = next(
-            (
-                cls
-                for opt, cls in option_to_class.items()
-                if getattr(options, opt, False)
-            ),
-            APITestAccuracy,  # default fallback
-        )
+        # Dynamically import the required test class based on options
+        if options.paddle_only:
+            from tester import APITestPaddleOnly
+            test_class = APITestPaddleOnly
+        elif options.paddle_cinn:
+            from tester import APITestCINNVSDygraph
+            test_class = APITestCINNVSDygraph
+        elif options.accuracy:
+            from tester import APITestAccuracy
+            test_class = APITestAccuracy
+        elif options.paddle_gpu_performance:
+            from tester import APITestPaddleGPUPerformance
+            test_class = APITestPaddleGPUPerformance
+        elif options.torch_gpu_performance:
+            from tester import APITestTorchGPUPerformance
+            test_class = APITestTorchGPUPerformance
+        elif options.paddle_torch_gpu_performance:
+            from tester import APITestPaddleTorchGPUPerformance
+            test_class = APITestPaddleTorchGPUPerformance
+        elif options.accuracy_stable:
+            from tester import APITestAccuracyStable
+            test_class = APITestAccuracyStable
+        elif options.paddle_custom_device:
+            from tester import APITestCustomDeviceVSCPU
+            test_class = APITestCustomDeviceVSCPU
+        else:
+            # default fallback
+            from tester import APITestAccuracy
+            test_class = APITestAccuracy
 
         if options.accuracy:
             case = test_class(
