@@ -2,11 +2,14 @@ import paddle
 from .api_config.log_writer import write_to_log
 from .base import APITestBase
 import torch
+import os
 
 class APITestCustomDeviceVSCPU(APITestBase):
     def __init__(self, api_config, **kwargs):
         super().__init__(api_config)
         self.test_amp = kwargs.get("test_amp", False)
+        self.generate_failed_tests = kwargs.get("generate_failed_tests", False)
+        self.failed_tests_dir = kwargs.get("failed_tests_dir", "failed_tests")
         if self.check_custom_device_available():
             self.custom_device_type = self._get_first_custom_device_type()
             self.custom_device_id = 0
@@ -291,3 +294,48 @@ class APITestCustomDeviceVSCPU(APITestBase):
         else:
             print("[Fail]", self.api_config.config, flush=True)
             write_to_log("accuracy_error", self.api_config.config)
+            
+            # 生成可复现的单测文件
+            if self.generate_failed_tests:
+                try:
+                    from .test_file_generator import generate_reproducible_test_file
+                    
+                    # 确定目标设备
+                    if self.check_xpu_available():
+                        target_device = "xpu"
+                        device_id = self.xpu_device_id
+                    elif self.check_custom_device_available():
+                        target_device = self.custom_device_type
+                        device_id = self.custom_device_id
+                    else:
+                        target_device = "cpu"
+                        device_id = 0
+                    
+                    # 确定失败阶段
+                    stage = "unknown"
+                    if not forward_pass:
+                        stage = "forward"
+                    elif not backward_pass:
+                        stage = "backward"
+                    
+                    error_info = {
+                        "error_type": "accuracy_error",
+                        "stage": stage,
+                        "need_backward": self.need_check_grad(),
+                    }
+                    
+                    # 生成测试文件
+                    test_file_path = generate_reproducible_test_file(
+                        self.api_config,
+                        error_info,
+                        output_dir=self.failed_tests_dir,
+                        test_amp=self.test_amp,
+                        target_device=target_device,
+                        device_id=device_id,
+                        test_instance=self,
+                    )
+                    
+                    if test_file_path:
+                        print(f"[Generated test file] {test_file_path}", flush=True)
+                except Exception as e:
+                    print(f"[Error generating test file] {e}", flush=True)

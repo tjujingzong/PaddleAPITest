@@ -412,9 +412,16 @@ def run_test_case(api_config_str, options):
             atol=options.atol,
             rtol=options.rtol,
             test_tol=options.test_tol,
+            generate_failed_tests=options.generate_failed_tests,
+            failed_tests_dir=options.failed_tests_dir,
         )
     else:
-        case = test_class(api_config, test_amp=options.test_amp)
+        case = test_class(
+            api_config,
+            test_amp=options.test_amp,
+            generate_failed_tests=options.generate_failed_tests,
+            failed_tests_dir=options.failed_tests_dir,
+        )
     try:
         case.test()
     except Exception as err:
@@ -589,6 +596,18 @@ def main():
         default=0,
         help="The numpy random seed ",
     )
+    parser.add_argument(
+        "--generate_failed_tests",
+        type=parse_bool,
+        default=False,
+        help="Whether to generate reproducible test files for failed cases",
+    )
+    parser.add_argument(
+        "--failed_tests_dir",
+        type=str,
+        default="failed_tests",
+        help="Directory to save generated test files",
+    )
 
     options = parser.parse_args()
     print(f"Options: {vars(options)}", flush=True)
@@ -681,9 +700,16 @@ def main():
                 atol=options.atol,
                 rtol=options.rtol,
                 test_tol=options.test_tol,
+                generate_failed_tests=options.generate_failed_tests,
+                failed_tests_dir=options.failed_tests_dir,
             )
         else:
-            case = test_class(api_config, test_amp=options.test_amp)
+            case = test_class(
+                api_config,
+                test_amp=options.test_amp,
+                generate_failed_tests=options.generate_failed_tests,
+                failed_tests_dir=options.failed_tests_dir,
+            )
         try:
             case.test()
         except Exception as err:
