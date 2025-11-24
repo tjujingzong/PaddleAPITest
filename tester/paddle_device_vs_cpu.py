@@ -10,8 +10,8 @@ class APITestCustomDeviceVSCPU(APITestBase):
         self.test_amp = kwargs.get("test_amp", False)
         self.generate_failed_tests = kwargs.get("generate_failed_tests", False)
         self.failed_tests_dir = kwargs.get("failed_tests_dir", "failed_tests")
+        self.custom_device_type = self._get_first_custom_device_type()
         if self.check_custom_device_available():
-            self.custom_device_type = self._get_first_custom_device_type()
             self.custom_device_id = 0
         if self.check_xpu_available():
             self.xpu_device_id = kwargs.get("xpu_device_id", 0)

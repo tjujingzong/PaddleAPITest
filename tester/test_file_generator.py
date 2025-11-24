@@ -4,6 +4,7 @@
 用于在测试失败时自动生成可复现的单测文件
 """
 import os
+import re
 import hashlib
 import numpy
 from datetime import datetime
@@ -112,6 +113,7 @@ def _generate_test_code(
     device_id: int = 0,
     non_tensor_args: List[Tuple[int, Any]] = None,
     non_tensor_kwargs: Dict[str, Any] = None,
+    output_grads_numpy: Optional[List[numpy.ndarray]] = None,
 ) -> str:
     """
     生成单测文件代码
@@ -126,6 +128,8 @@ def _generate_test_code(
         device_id: 设备ID
     """
     # 生成文件头
+    is_tensor_method = api_name.startswith('paddle.Tensor.')
+    method_name = api_name.split(".")[-1] if is_tensor_method else ""
     code_lines = [
         '"""',
         f'自动生成的单测文件 - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
@@ -139,13 +143,21 @@ def _generate_test_code(
         'import numpy',
         'import torch',
         '',
-        f'# 设置目标设备',
-        f'paddle.set_device("{target_device}:{device_id}")',
+        f'TARGET_DEVICE = "{target_device}:{device_id}"',
+        'RTOL = 1e-2',
+        'ATOL = 1e-2',
+        f'TEST_AMP = {str(test_amp)}',
+        f'IS_TENSOR_METHOD = {str(is_tensor_method)}',
+        f'METHOD_NAME = "{method_name}"',
+        f'API_NAME = "{api_name}"',
+        '',
+        'NUMPY_DATA = {}',
+        'if not IS_TENSOR_METHOD:',
+        '    API_FUNC = eval(API_NAME)',
+        'else:',
+        '    API_FUNC = None',
         '',
     ]
-    
-    # 检查是否是Tensor方法调用
-    is_tensor_method = api_name.startswith('paddle.Tensor.')
     
     # 对于Tensor方法，如果args为空，self可能在kwargs中
     if is_tensor_method and not args_numpy and kwargs_numpy:
@@ -154,207 +166,245 @@ def _generate_test_code(
         first_value = kwargs_numpy.pop(first_key)
         args_numpy.insert(0, (first_key, first_value))
     
-    # 生成输入数据
-    code_lines.append('# 生成输入数据')
-    all_inputs = []
-    tensor_vars = {}  # 存储tensor变量名
-    
-    # 处理位置参数
-    for i, (var_name, numpy_data) in enumerate(args_numpy):
+    code_lines.append('# 生成输入数据 (仅保存 numpy 数据)')
+    backward_required = error_info.get("stage") == "backward" or error_info.get("need_backward", False)
+
+    fallback_negative_index = -1
+    arg_spec_map: Dict[int, Dict[str, Any]] = {}
+    kwarg_spec_map: Dict[str, Dict[str, Any]] = {}
+
+    def get_arg_index(label: str) -> int:
+        nonlocal fallback_negative_index
+        match = re.match(r"arg_(\d+)", label)
+        if match:
+            return int(match.group(1))
+        idx = fallback_negative_index
+        fallback_negative_index -= 1
+        return idx
+
+    for var_name, numpy_data in args_numpy:
+        arg_index = get_arg_index(var_name)
         if isinstance(numpy_data, (list, tuple)):
-            # 处理列表/元组类型的输入
-            code_lines.append(f'# 位置参数 {var_name} (list/tuple)')
-            tensor_list = []
+            item_specs = []
             for j, item in enumerate(numpy_data):
                 if isinstance(item, numpy.ndarray):
                     item_var = f'{var_name}_item_{j}'
                     code_lines.append(_serialize_numpy_array(item, item_var))
-                    # 创建paddle tensor
-                    tensor_var = f'{item_var}_tensor'
-                    code_lines.append(f'{tensor_var} = paddle.to_tensor({item_var})')
-                    tensor_list.append(tensor_var)
-                    all_inputs.append(tensor_var)
-            if tensor_list:
-                code_lines.append(f'{var_name}_tensors = [{", ".join(tensor_list)}]')
+                    code_lines.append(f"NUMPY_DATA['{item_var}'] = {item_var}")
+                    item_specs.append({"type": "tensor", "data_key": item_var})
+            arg_spec_map[arg_index] = {
+                "type": "list",
+                "items": item_specs,
+                "is_tuple": isinstance(numpy_data, tuple),
+            }
         elif isinstance(numpy_data, numpy.ndarray):
-            code_lines.append(f'# 位置参数 {var_name}')
             code_lines.append(_serialize_numpy_array(numpy_data, var_name))
-            # 创建paddle tensor
-            tensor_var = f'{var_name}_tensor'
-            code_lines.append(f'{tensor_var} = paddle.to_tensor({var_name})')
-            tensor_vars[var_name] = tensor_var
-            all_inputs.append(tensor_var)
-    
-    # 处理关键字参数
+            code_lines.append(f"NUMPY_DATA['{var_name}'] = {var_name}")
+            arg_spec_map[arg_index] = {"type": "tensor", "data_key": var_name}
+
     for key, numpy_data in kwargs_numpy.items():
         if isinstance(numpy_data, (list, tuple)):
-            # 处理列表/元组类型的关键字参数
-            code_lines.append(f'# 关键字参数 {key} (list/tuple)')
-            tensor_list = []
+            item_specs = []
             for j, item in enumerate(numpy_data):
                 if isinstance(item, numpy.ndarray):
                     item_var = f'kwarg_{key}_item_{j}'
                     code_lines.append(_serialize_numpy_array(item, item_var))
-                    # 创建paddle tensor
-                    tensor_var = f'{item_var}_tensor'
-                    code_lines.append(f'{tensor_var} = paddle.to_tensor({item_var})')
-                    tensor_list.append(tensor_var)
-                    all_inputs.append(tensor_var)
-            if tensor_list:
-                code_lines.append(f'kwarg_{key}_tensors = [{", ".join(tensor_list)}]')
+                    code_lines.append(f"NUMPY_DATA['{item_var}'] = {item_var}")
+                    item_specs.append({"type": "tensor", "data_key": item_var})
+            kwarg_spec_map[key] = {
+                "type": "list",
+                "items": item_specs,
+                "is_tuple": isinstance(numpy_data, tuple),
+            }
         elif isinstance(numpy_data, numpy.ndarray):
-            code_lines.append(f'# 关键字参数 {key}')
             var_name = f'kwarg_{key}'
             code_lines.append(_serialize_numpy_array(numpy_data, var_name))
-            # 创建paddle tensor
-            tensor_var = f'{var_name}_tensor'
-            code_lines.append(f'{tensor_var} = paddle.to_tensor({var_name})')
-            tensor_vars[key] = tensor_var
-            all_inputs.append(tensor_var)
+            code_lines.append(f"NUMPY_DATA['{var_name}'] = {var_name}")
+            kwarg_spec_map[key] = {"type": "tensor", "data_key": var_name}
     
-    code_lines.append('')
-    code_lines.append('# 构建API调用参数')
-    
-    # 处理非tensor参数
     if non_tensor_args is None:
         non_tensor_args = []
     if non_tensor_kwargs is None:
         non_tensor_kwargs = {}
-    
-    # 为非tensor参数生成代码
+
     for idx, value in non_tensor_args:
-        # 非tensor参数直接使用原值
-        code_lines.append(f'# 非tensor位置参数 arg_{idx}')
-        if isinstance(value, str):
-            code_lines.append(f'arg_{idx}_non_tensor = "{value}"')
-        else:
-            code_lines.append(f'arg_{idx}_non_tensor = {repr(value)}')
-    
+        if idx not in arg_spec_map:
+            arg_spec_map[idx] = {"type": "value", "value": value}
     for key, value in non_tensor_kwargs.items():
-        # 非tensor关键字参数直接使用原值
-        code_lines.append(f'# 非tensor关键字参数 {key}')
-        if isinstance(value, str):
-            code_lines.append(f'kwarg_{key}_non_tensor = "{value}"')
-        else:
-            code_lines.append(f'kwarg_{key}_non_tensor = {repr(value)}')
-    
+        if key not in kwarg_spec_map:
+            kwarg_spec_map[key] = {"type": "value", "value": value}
+
+    arg_specs = [arg_spec_map[idx] for idx in sorted(arg_spec_map.keys())]
+    kwarg_specs = {key: kwarg_spec_map[key] for key in sorted(kwarg_spec_map.keys())}
+
+    grad_keys: List[str] = []
+    if output_grads_numpy:
+        for idx, grad_numpy in enumerate(output_grads_numpy):
+            var_name = f'output_grad_{idx}'
+            code_lines.append(_serialize_numpy_array(grad_numpy, var_name))
+            code_lines.append(f"NUMPY_DATA['{var_name}'] = {var_name}")
+            grad_keys.append(var_name)
+
     code_lines.append('')
-    
-    # 构建位置参数列表（使用tensor变量）
-    arg_vars = []
-    numpy_idx = 0
-    non_tensor_idx = 0
-    for i in range(max(len(args_numpy) + len(non_tensor_args), 0)):
-        if numpy_idx < len(args_numpy) and args_numpy[numpy_idx][0] == f"arg_{i}":
-            # 这是tensor参数
-            var_name, numpy_data = args_numpy[numpy_idx]
-            if isinstance(numpy_data, (list, tuple)):
-                arg_vars.append(f'{var_name}_tensors')
-            else:
-                arg_vars.append(tensor_vars.get(var_name, var_name))
-            numpy_idx += 1
-        elif non_tensor_idx < len(non_tensor_args) and non_tensor_args[non_tensor_idx][0] == i:
-            # 这是非tensor参数
-            arg_vars.append(f'arg_{i}_non_tensor')
-            non_tensor_idx += 1
-    
-    # 构建关键字参数字典（使用tensor变量）
-    kwarg_vars = {}
-    for key, numpy_data in kwargs_numpy.items():
-        if isinstance(numpy_data, (list, tuple)):
-            kwarg_vars[key] = f'kwarg_{key}_tensors'
-        else:
-            kwarg_vars[key] = tensor_vars.get(key, f'kwarg_{key}_tensor')
-    
-    # 添加非tensor关键字参数
-    for key in non_tensor_kwargs:
-        kwarg_vars[key] = f'kwarg_{key}_non_tensor'
-    
-    # 生成API调用代码
+    code_lines.append(f'BACKWARD_REQUIRED = {str(backward_required)}')
+    code_lines.append(f'ARG_SPECS = {repr(arg_specs)}')
+    code_lines.append(f'KWARG_SPECS = {repr(kwarg_specs)}')
+    code_lines.append(f'OUTPUT_GRAD_KEYS = {repr(grad_keys)}')
     code_lines.append('')
-    code_lines.append('# 执行API调用')
-    code_lines.append('try:')
-    
-    # 检查是否是Tensor方法调用
-    is_tensor_method = api_name.startswith('paddle.Tensor.')
-    if is_tensor_method:
-        # 对于Tensor方法，第一个参数是self（tensor对象）
-        method_name = api_name.split('.')[-1]
-        if arg_vars:
-            tensor_var = arg_vars[0]
-            remaining_args = arg_vars[1:] if len(arg_vars) > 1 else []
-        else:
-            # 如果没有位置参数，尝试从kwargs中获取（通常是self）
-            # 对于Tensor方法，self通常在kwargs中
-            tensor_var = None
-            remaining_args = []
-    else:
-        tensor_var = None
-        remaining_args = arg_vars
-    
-    # 构建API调用
-    api_call_parts = []
-    if not is_tensor_method:
-        # 普通API调用
-        if remaining_args:
-            api_call_parts.extend(remaining_args)
-    else:
-        # Tensor方法调用
-        if remaining_args:
-            api_call_parts.extend(remaining_args)
-    
-    if kwarg_vars:
-        kwarg_str = ', '.join([f'{k}={v}' for k, v in kwarg_vars.items()])
-        api_call_parts.append(kwarg_str)
-    
-    if is_tensor_method and tensor_var:
-        # Tensor方法调用: tensor.method(*args, **kwargs)
-        if api_call_parts:
-            api_call = f'    output = {tensor_var}.{method_name}(' + ', '.join(api_call_parts) + ')'
-        else:
-            api_call = f'    output = {tensor_var}.{method_name}()'
-    else:
-        # 普通API调用: api_name(*args, **kwargs)
-        if api_call_parts:
-            api_call = f'    output = {api_name}(' + ', '.join(api_call_parts) + ')'
-        else:
-            api_call = f'    output = {api_name}()'
-    
-    if test_amp:
-        code_lines.append('    with paddle.amp.auto_cast():')
-        code_lines.append('        ' + api_call)
-    else:
-        code_lines.append(api_call)
-    
-    code_lines.append('    print("Forward pass succeeded")')
-    code_lines.append('    print(f"Output type: {type(output)}")')
-    code_lines.append('    if isinstance(output, paddle.Tensor):')
-    code_lines.append('        print(f"Output shape: {output.shape}, dtype: {output.dtype}")')
-    code_lines.append('    elif isinstance(output, (list, tuple)):')
-    code_lines.append('        print(f"Output length: {len(output)}")')
-    code_lines.append('        for i, item in enumerate(output):')
-    code_lines.append('            if isinstance(item, paddle.Tensor):')
-    code_lines.append('                print(f"  Output[{i}]: shape={item.shape}, dtype={item.dtype}")')
-    code_lines.append('')
-    
-    # 如果有backward测试
-    if error_info.get("stage") == "backward" or error_info.get("need_backward", False):
-        code_lines.append('')
-        code_lines.append('    # Backward测试')
-        code_lines.append('    if isinstance(output, paddle.Tensor):')
-        code_lines.append('        output.backward()')
-        code_lines.append('    elif isinstance(output, (list, tuple)):')
-        code_lines.append('        for item in output:')
-        code_lines.append('            if isinstance(item, paddle.Tensor):')
-        code_lines.append('                item.backward()')
-        code_lines.append('    print("Backward pass succeeded")')
-    
-    code_lines.append('except Exception as e:')
-    code_lines.append('    print(f"Error occurred: {e}")')
-    code_lines.append('    import traceback')
-    code_lines.append('    traceback.print_exc()')
-    code_lines.append('    raise')
-    
+
+    helper_functions = [
+        'def clone_tensor_from_data(key):',
+        '    tensor = paddle.to_tensor(NUMPY_DATA[key])',
+        '    tensor.stop_gradient = False',
+        '    return tensor',
+        '',
+        'def build_from_spec(spec, tensor_refs):',
+        '    spec_type = spec["type"]',
+        '    if spec_type == "tensor":',
+        '        tensor = clone_tensor_from_data(spec["data_key"])',
+        '        tensor_refs.append(tensor)',
+        '        return tensor',
+        '    if spec_type == "list":',
+        '        items = [build_from_spec(item, tensor_refs) for item in spec.get("items", [])]',
+        '        return tuple(items) if spec.get("is_tuple") else items',
+        '    if spec_type == "value":',
+        '        return spec["value"]',
+        '    raise ValueError(f"Unsupported spec type: {spec_type}")',
+        '',
+        'def build_inputs():',
+        '    tensor_refs = []',
+        '    args = [build_from_spec(spec, tensor_refs) for spec in ARG_SPECS]',
+        '    kwargs = {key: build_from_spec(spec, tensor_refs) for key, spec in KWARG_SPECS.items()}',
+        '    return args, kwargs, tensor_refs',
+        '',
+        'def collect_output_tensors(output):',
+        '    tensors = []',
+        '    if isinstance(output, paddle.Tensor):',
+        '        if output._is_initialized() or output.numel() == 0:',
+        '            tensors.append(output)',
+        '        return tensors',
+        '    if isinstance(output, (list, tuple)):',
+        '        for item in output:',
+        '            tensors.extend(collect_output_tensors(item))',
+        '        return tensors',
+        '    return tensors',
+        '',
+        'def build_output_grad_tensors(output):',
+        '    tensors = collect_output_tensors(output)',
+        '    if not tensors:',
+        '        raise RuntimeError("Backward expected tensor outputs but none found")',
+        '    if OUTPUT_GRAD_KEYS:',
+        '        if len(OUTPUT_GRAD_KEYS) != len(tensors):',
+        '            raise RuntimeError("Gradient spec count mismatch with outputs")',
+        '        grad_tensors = []',
+        '        for key, tensor in zip(OUTPUT_GRAD_KEYS, tensors):',
+        '            grad_np = NUMPY_DATA[key]',
+        '            grad_tensor = paddle.to_tensor(',
+        '                grad_np,',
+        '                dtype="float32" if tensor.dtype == paddle.bfloat16 else tensor.dtype,',
+        '            )',
+        '            if tensor.dtype == paddle.bfloat16:',
+        '                grad_tensor = paddle.cast(grad_tensor, "bfloat16")',
+        '            grad_tensors.append(grad_tensor)',
+        '    else:',
+        '        grad_tensors = [paddle.ones_like(tensor) for tensor in tensors]',
+        '    return tensors, grad_tensors',
+        '',
+        'def run_backward(output):',
+        '    tensors, grad_tensors = build_output_grad_tensors(output)',
+        '    for tensor, grad in zip(tensors, grad_tensors):',
+        '        tensor.backward(grad)',
+        '    return',
+        '',
+        'def tensor_to_numpy(tensor):',
+        '    if tensor.dtype == paddle.bfloat16:',
+        '        tensor = paddle.cast(tensor, "float32")',
+        '    return tensor.detach().cpu().numpy()',
+        '',
+        'def compare_tensors(cpu_tensor, target_tensor, label):',
+        '    cpu_np = tensor_to_numpy(cpu_tensor)',
+        '    target_np = tensor_to_numpy(target_tensor)',
+        '    cpu_torch = torch.from_numpy(cpu_np)',
+        '    target_torch = torch.from_numpy(target_np)',
+        '    torch.testing.assert_close(',
+        '        cpu_torch,',
+        '        target_torch,',
+        '        rtol=RTOL,',
+        '        atol=ATOL,',
+        '        equal_nan=True,',
+        '        msg=f"{label} mismatch",',
+        '    )',
+        '',
+        'def compare_outputs(cpu_output, target_output, prefix="output"):',
+        '    if isinstance(cpu_output, paddle.Tensor):',
+        '        if not isinstance(target_output, paddle.Tensor):',
+        '            raise AssertionError(f"{prefix} type mismatch: {type(cpu_output)} vs {type(target_output)}")',
+        '        compare_tensors(cpu_output, target_output, prefix)',
+        '        return',
+        '    if isinstance(cpu_output, (list, tuple)):',
+        '        if not isinstance(target_output, (list, tuple)) or len(cpu_output) != len(target_output):',
+        '            raise AssertionError(f"{prefix} length/type mismatch")',
+        '        for idx, (cpu_item, target_item) in enumerate(zip(cpu_output, target_output)):',
+        '            compare_outputs(cpu_item, target_item, f"{prefix}[{idx}]")',
+        '        return',
+        '    if cpu_output != target_output:',
+        '        raise AssertionError(f"{prefix} mismatch: {cpu_output} vs {target_output}")',
+        '',
+        'def compare_gradients(cpu_grads, target_grads):',
+        '    if len(cpu_grads) != len(target_grads):',
+        '        raise AssertionError("Gradient list length mismatch")',
+        '    for idx, (cpu_grad, target_grad) in enumerate(zip(cpu_grads, target_grads)):',
+        '        if cpu_grad is None and target_grad is None:',
+        '            continue',
+        '        if (cpu_grad is None) != (target_grad is None):',
+        '            raise AssertionError(f"Gradient[{idx}] presence mismatch")',
+        '        cpu_torch = torch.from_numpy(cpu_grad)',
+        '        target_torch = torch.from_numpy(target_grad)',
+        '        torch.testing.assert_close(',
+        '            cpu_torch,',
+        '            target_torch,',
+        '            rtol=RTOL,',
+        '            atol=ATOL,',
+        '            equal_nan=True,',
+        '            msg=f"gradient[{idx}] mismatch",',
+        '        )',
+        '',
+        'def run_on_device(device_str):',
+        '    paddle.set_device(device_str)',
+        '    args, kwargs, tensor_refs = build_inputs()',
+        '    if IS_TENSOR_METHOD:',
+        '        tensor_obj = args[0]',
+        '        call_args = args[1:] if len(args) > 1 else []',
+        '        api_callable = getattr(tensor_obj, METHOD_NAME)',
+        '    else:',
+        '        tensor_obj = None',
+        '        call_args = args',
+        '        api_callable = API_FUNC',
+        '    if TEST_AMP:',
+        '        with paddle.amp.auto_cast():',
+        '            output = api_callable(*call_args, **kwargs)',
+        '    else:',
+        '        output = api_callable(*call_args, **kwargs)',
+        '    grads = []',
+        '    if BACKWARD_REQUIRED:',
+        '        run_backward(output)',
+        '        for tensor in tensor_refs:',
+        '            grad = tensor.grad',
+        '            grads.append(None if grad is None else grad.detach().cpu().numpy())',
+        '    return output, grads',
+    ]
+
+    code_lines.extend(helper_functions)
+
+    code_lines.append('cpu_output, cpu_grads = run_on_device("cpu")')
+    code_lines.append('target_output, target_grads = run_on_device(TARGET_DEVICE)')
+    code_lines.append('compare_outputs(cpu_output, target_output)')
+    code_lines.append('print("Forward comparison passed")')
+    if backward_required:
+        code_lines.append('compare_gradients(cpu_grads, target_grads)')
+        code_lines.append('print("Backward comparison passed")')
+    code_lines.append('print("Reproduction completed.")')
+
     return '\n'.join(code_lines)
 
 
@@ -392,8 +442,13 @@ def generate_reproducible_test_file(
         kwargs_numpy = {}
         non_tensor_args = []
         non_tensor_kwargs = {}
+        output_grads_numpy: List[numpy.ndarray] = []
         
         if test_instance is not None:
+            if hasattr(test_instance, 'outputs_grad_numpy') and test_instance.outputs_grad_numpy:
+                for grad_numpy in test_instance.outputs_grad_numpy:
+                    if isinstance(grad_numpy, numpy.ndarray):
+                        output_grads_numpy.append(grad_numpy)
             # 从测试实例的paddle_args_config和paddle_kwargs_config中提取
             if hasattr(test_instance, 'paddle_args_config'):
                 for i, arg_config in enumerate(test_instance.paddle_args_config):
@@ -425,12 +480,16 @@ def generate_reproducible_test_file(
                 api_config.kwargs if hasattr(api_config, 'kwargs') else {}
             )
         
-        # 生成文件名
+        # 生成文件名（包含参数信息）
         api_name_safe = api_config.api_name.replace('.', '_').replace(':', '_')
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        config_hash = hashlib.md5(api_config.config.encode()).hexdigest()[:8]
-        pid = os.getpid()
-        filename = f"test_{api_name_safe}_{timestamp}_{pid}_{config_hash}.py"
+        config_repr = re.sub(r'[^0-9a-zA-Z]+', '_', api_config.config)
+        config_repr = re.sub(r'_+', '_', config_repr).strip('_')
+        if len(config_repr) > 120:
+            config_repr = config_repr[:120]
+        if not config_repr:
+            config_repr = api_name_safe
+        config_hash = hashlib.md5(api_config.config.encode()).hexdigest()[:6]
+        filename = f"test_{config_repr}_{config_hash}.py"
         filepath = output_path / filename
         
         # 生成测试代码
@@ -445,6 +504,7 @@ def generate_reproducible_test_file(
             device_id=device_id,
             non_tensor_args=non_tensor_args,
             non_tensor_kwargs=non_tensor_kwargs,
+            output_grads_numpy=output_grads_numpy if output_grads_numpy else None,
         )
         
         # 写入文件
