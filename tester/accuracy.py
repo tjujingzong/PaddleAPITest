@@ -20,6 +20,7 @@ class APITestAccuracy(APITestBase):
         self.atol = kwargs.get("atol", 1e-2)
         self.rtol = kwargs.get("rtol", 1e-2)
         self.test_tol = kwargs.get("test_tol", False)
+        self.exit_on_paddle_error = kwargs.get("exit_on_paddle_error", False)
         if self.test_tol:
             torch.set_printoptions(profile="short")
         self.converter = get_converter()
@@ -222,6 +223,8 @@ class APITestAccuracy(APITestBase):
                 raise
             print(f"[paddle error] {self.api_config.config}\n{str(err)}", flush=True)
             write_to_log("paddle_error", self.api_config.config)
+            if self.exit_on_paddle_error :
+                raise
             return
 
         try:
@@ -355,6 +358,8 @@ class APITestAccuracy(APITestBase):
                     write_to_log("oom", self.api_config.config)
                     raise
                 print(f"[paddle error] backward {self.api_config.config}\n{str(err)}", flush=True)
+                if self.exit_on_paddle_error :
+                    raise
                 write_to_log("paddle_error", self.api_config.config)
                 return
 

@@ -93,6 +93,12 @@ def main():
         default=1e-2,
         help="Relative tolerance for accuracy tests",
     )
+    parser.add_argument(
+        "--exit_on_paddle_error",
+        type=parse_bool,
+        default=False,
+        help="Whether to exit the process when a paddle_error occurs.",
+    )
     options = parser.parse_args()
     set_cfg(options)  # Set the command line arguments in the config module
 
@@ -134,6 +140,7 @@ def main():
                 test_amp=options.test_amp,
                 atol=options.atol,
                 rtol=options.rtol,
+                exit_on_paddle_error=options.exit_on_paddle_error,
             )
         else:
             case = test_class(api_config, test_amp=options.test_amp)
