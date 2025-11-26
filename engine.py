@@ -94,7 +94,7 @@ def main():
         help="Relative tolerance for accuracy tests",
     )
     parser.add_argument(
-        "--exit_on_paddle_error",
+        "--exit_on_error",
         type=parse_bool,
         default=False,
         help="Whether to exit the process when a paddle_error occurs.",
@@ -140,7 +140,7 @@ def main():
                 test_amp=options.test_amp,
                 atol=options.atol,
                 rtol=options.rtol,
-                exit_on_paddle_error=options.exit_on_paddle_error,
+                exit_on_error=options.exit_on_error,
             )
         else:
             case = test_class(api_config, test_amp=options.test_amp)
