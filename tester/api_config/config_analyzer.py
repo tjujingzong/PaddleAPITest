@@ -1665,9 +1665,20 @@ class TensorConfig:
                         self.tensor = numpy.random.randint(0, 2, size=self.shape).astype(self.dtype)
                         if self.numel() == 1:
                             self.numpy_tensor = numpy.random.randint(0,num,self.shape).astype(self.dtype)
-                            while api_config.shape2[self.numpy_tensor[0]] != \
-                                  api_config.shape1[self.numpy_tensor[0]]:
-                                self.numpy_tensor = numpy.random.randint(0,num,self.shape).astype(self.dtype)
+                            dim1 = len(api_config.shape1)
+                            dim2 = len(api_config.shape2)
+                            min_dim = min(dim1,dim2)
+                            candidate_set = set()
+                            for i in range(min_dim):
+                                if api_config.shape1[i] == api_config.shape2[i]:
+                                    candidate_set.add(i)
+                            if candidate_set:
+                                import random
+                                self.numpy_tensor = [random.choice(list(candidate_set))]
+                            else:
+                                raise ValueError(
+                                    f"No valid axis found for tensordot,x shape {api_config.shape1}, y shape {api_config.shape2},axes {item}"
+                                )
                         else:
                             used1 = []
                             used2 = []
