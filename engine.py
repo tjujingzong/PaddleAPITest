@@ -12,7 +12,7 @@ import torch
 from tester import (APIConfig, APITestAccuracy, APITestAccuracyStable,
                     APITestCINNVSDygraph, APITestPaddleGPUPerformance,
                     APITestPaddleOnly, APITestPaddleTorchGPUPerformance,
-                    APITestTorchGPUPerformance, set_cfg)
+                    APITestTorchGPUPerformance,APITestCustomDeviceVSCPU,set_cfg)
 from tester.api_config.log_writer import (close_process_files, read_log,
                                           write_to_log)
 
@@ -64,6 +64,10 @@ def main():
     )
     parser.add_argument(
         "--accuracy_stable",
+        default=False,
+    )
+    parser.add_argument(
+        "--paddle_custom_device",
         default=False,
     )
     parser.add_argument(
@@ -124,6 +128,8 @@ def main():
         test_class = APITestPaddleTorchGPUPerformance
     elif options.accuracy_stable:
         test_class = APITestAccuracyStable
+    elif options.paddle_custom_device:
+        test_class = APITestCustomDeviceVSCPU
 
     if options.api_config != "":
         options.api_config = options.api_config.strip()

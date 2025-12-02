@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         APITestTorchGPUPerformance,
         APITestPaddleTorchGPUPerformance,
         APITestAccuracyStable,
+        APITestCustomDeviceVSCPU,
     )
     import torch
     import paddle
@@ -382,7 +383,8 @@ def init_worker_gpu(
                             APITestCINNVSDygraph, APITestPaddleGPUPerformance,
                             APITestPaddleOnly,
                             APITestPaddleTorchGPUPerformance,
-                            APITestTorchGPUPerformance)
+                            APITestTorchGPUPerformance,
+                            APITestCustomDeviceVSCPU)
 
         test_classes = {
             "APIConfig": APIConfig,
@@ -393,6 +395,7 @@ def init_worker_gpu(
             "APITestTorchGPUPerformance": APITestTorchGPUPerformance,
             "APITestPaddleTorchGPUPerformance": APITestPaddleTorchGPUPerformance,
             "APITestAccuracyStable": APITestAccuracyStable,
+            "APITestCustomDeviceVSCPU": APITestCustomDeviceVSCPU
         }
         globals().update(test_classes)
 
@@ -462,6 +465,7 @@ def run_test_case(api_config_str, options):
         "torch_gpu_performance": APITestTorchGPUPerformance,
         "paddle_torch_gpu_performance": APITestPaddleTorchGPUPerformance,
         "accuracy_stable": APITestAccuracyStable,
+        "paddle_custom_device": APITestCustomDeviceVSCPU,
     }
     test_class = next(
         (cls for opt, cls in option_to_class.items() if getattr(options, opt, False)),
@@ -549,6 +553,12 @@ def main():
         type=parse_bool,
         default=False,
         help="test paddle api to corespoding torch api steadily",
+    )
+    parser.add_argument(
+        "--paddle_custom_device",
+        type=parse_bool,
+        default=False,
+        help="test paddle api on custom device vs CPU",
     )
     parser.add_argument(
         "--test_amp",
@@ -650,6 +660,7 @@ def main():
         options.torch_gpu_performance,
         options.paddle_torch_gpu_performance,
         options.accuracy_stable,
+        options.paddle_custom_device,
     ]
     if len([m for m in mode if m is True]) != 1:
         print(
@@ -661,6 +672,7 @@ def main():
             "--torch_gpu_performance,"
             "--paddle_torch_gpu_performance"
             "--accuracy_stable"
+            "--paddle_custom_device"
             " to True.",
             flush=True,
         )
@@ -701,6 +713,7 @@ def main():
             "torch_gpu_performance": APITestTorchGPUPerformance,
             "paddle_torch_gpu_performance": APITestPaddleTorchGPUPerformance,
             "accuracy_stable": APITestAccuracyStable,
+            "paddle_custom_device": APITestCustomDeviceVSCPU,
         }
         test_class = next(
             (
