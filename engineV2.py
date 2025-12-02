@@ -3,7 +3,10 @@ import errno
 import gc
 import math
 import os
+import re
+import shutil
 import signal
+import subprocess
 import sys
 import time
 from concurrent.futures import TimeoutError, as_completed
@@ -35,6 +38,14 @@ os.environ["FLAGS_use_system_allocator"] = "1"
 os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
 
 VALID_TEST_ARGS = {"test_amp", "test_backward", "atol", "rtol", "test_tol"}
+
+DEVICE_TYPE = None
+DEVICE_TYPE_DETECTED = False
+DEVICE_COUNT = None    # total number of devices
+_MEM_SNAPSHOT = None    # dict: gpu_id -> (total_gb, used_gb)
+_MEM_SNAPSHOT_TS = 0.0
+_MEM_SNAPSHOT_TTL = 2.0   # seconds — snapshot cache ttl
+
 
 
 def cleanup(pool):
@@ -76,14 +87,170 @@ def estimate_timeout(api_config) -> float:
     # return TIMEOUT_STEPS[-1][1]
     return 1800
 
+def detect_device_type() -> str:
+    global DEVICE_TYPE, DEVICE_TYPE_DETECTED
+    if DEVICE_TYPE_DETECTED:
+        return DEVICE_TYPE
+
+    # 优先尝试 NVML（NVIDIA GPU）
+    try:
+        pynvml.nvmlInit()
+        count = pynvml.nvmlDeviceGetCount()
+        pynvml.nvmlShutdown()
+        if count > 0:
+            DEVICE_TYPE = "gpu"
+            DEVICE_TYPE_DETECTED = True
+            return DEVICE_TYPE
+    except Exception:
+        # 没有 NVML 或不是 NVIDIA，忽略错误，继续往下探测
+        pass
+
+    # 再尝试 XPU
+    if shutil.which("xpu-smi"):
+        try:
+            out = subprocess.check_output(["xpu-smi"], text=True, stderr=subprocess.STDOUT)
+            if any(re.match(r"^\|\s*\d+\s+\S", line) for line in out.splitlines()):
+                DEVICE_TYPE = "xpu"
+                DEVICE_TYPE_DETECTED = True
+                return DEVICE_TYPE
+        except Exception:
+            pass
+
+    # 再尝试 Iluvatar
+    if shutil.which("ixsmi"):
+        try:
+            out = subprocess.check_output(["ixsmi"], text=True, stderr=subprocess.STDOUT)
+            if any(re.match(r"^\|\s*\d+\s+Iluvatar", line) for line in out.splitlines()):
+                DEVICE_TYPE = "iluvatar"
+                DEVICE_TYPE_DETECTED = True
+                return DEVICE_TYPE
+        except Exception:
+            pass
+
+    # 都没有就是 CPU
+    DEVICE_TYPE = "cpu"
+    DEVICE_TYPE_DETECTED = True
+    return DEVICE_TYPE
+
+def get_device_count() -> int:
+    """Get the number of available devices (accelerators)."""
+    global DEVICE_COUNT
+    if DEVICE_COUNT is not None:
+        return DEVICE_COUNT
+
+    device_type = detect_device_type()
+
+    if device_type == "gpu":
+        pynvml.nvmlInit()
+        try:
+            count = pynvml.nvmlDeviceGetCount()
+        finally:
+            pynvml.nvmlShutdown()
+        DEVICE_COUNT = count
+        return count
+
+    if device_type == "xpu":
+        out = subprocess.check_output(["xpu-smi"], text=True, stderr=subprocess.STDOUT)
+        ids = set()
+        for line in out.splitlines():
+            if "Processes:" in line:
+                break
+            m = re.match(r"^\|\s*(\d+)\s+\S", line)
+            if m:
+                ids.add(int(m.group(1)))
+        DEVICE_COUNT = len(ids)
+        return DEVICE_COUNT
+
+    if device_type == "iluvatar":
+        out = subprocess.check_output(["ixsmi"], text=True, stderr=subprocess.STDOUT)
+        ids = set()
+        for line in out.splitlines():
+            m = re.match(r"^\|\s*(\d+)\s+Iluvatar", line)
+            if m:
+                ids.add(int(m.group(1)))
+        DEVICE_COUNT = len(ids)
+        return DEVICE_COUNT
+
+    # CPU case／no accelerator
+    DEVICE_COUNT = 0
+    return 0
+
+
+
+def _refresh_snapshot(device_type):
+    global _MEM_SNAPSHOT, _MEM_SNAPSHOT_TS
+
+    now = time.time()
+    if now - _MEM_SNAPSHOT_TS < _MEM_SNAPSHOT_TTL and _MEM_SNAPSHOT is not None:
+        return
+
+    snapshot = {}
+    if device_type == "xpu":
+        out = subprocess.check_output(["xpu-smi"], text=True, stderr=subprocess.STDOUT)
+        lines = out.splitlines()
+        for i, line in enumerate(lines):
+            m = re.match(r"^\|\s*(\d+)\s+\S", line)
+            if m:
+                dev_id = int(m.group(1))
+                for j in range(i + 1, min(i + 8, len(lines))):
+                    mm = re.search(r"(\d+)\s*MiB\s*/\s*(\d+)\s*MiB", lines[j])
+                    if mm:
+                        used_mib = int(mm.group(1))
+                        total_mib = int(mm.group(2))
+                        snapshot[dev_id] = (total_mib / 1024.0, used_mib / 1024.0)
+                        break
+
+    elif device_type == "iluvatar":
+        out = subprocess.check_output(["ixsmi"], text=True, stderr=subprocess.STDOUT)
+        lines = out.splitlines()
+        for i, line in enumerate(lines):
+            m = re.match(r"^\|\s*(\d+)\s+Iluvatar", line)
+            if m:
+                dev_id = int(m.group(1))
+                for j in range(i + 1, min(i + 8, len(lines))):
+                    mm = re.search(r"(\d+)\s*MiB\s*/\s*(\d+)\s*MiB", lines[j])
+                    if mm:
+                        used_mib = int(mm.group(1))
+                        total_mib = int(mm.group(2))
+                        snapshot[dev_id] = (total_mib / 1024.0, used_mib / 1024.0)
+                        break
+
+    else:
+        # GPU (NVIDIA) case does not use snapshot (use NVML directly)
+        _MEM_SNAPSHOT = None
+        _MEM_SNAPSHOT_TS = now
+        return
+
+    _MEM_SNAPSHOT = snapshot
+    _MEM_SNAPSHOT_TS = now
+
+def get_memory_info(gpu_id):
+    """Return (total_memory, used_memory) in GB for accelerator device."""
+    device_type = detect_device_type()
+
+    if device_type == "gpu":
+        pynvml.nvmlInit()
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
+            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            return int(mem_info.total) / (1024**3), int(mem_info.used) / (1024**3)
+        finally:
+            pynvml.nvmlShutdown()
+
+    if device_type in ("xpu", "iluvatar"):
+        _refresh_snapshot(device_type)
+        if _MEM_SNAPSHOT is None or gpu_id not in _MEM_SNAPSHOT:
+            raise RuntimeError(f"Failed to get memory info for {device_type} device {gpu_id}")
+        return _MEM_SNAPSHOT[gpu_id]
+
+    raise RuntimeError("No supported accelerator (GPU / XPU / Iluvatar) detected.")
+
 
 def validate_gpu_options(options) -> tuple:
     """Validate and normalize GPU-related options."""
-    pynvml.nvmlInit()
-    device_count = pynvml.nvmlDeviceGetCount()
-    pynvml.nvmlShutdown()
+    device_count = get_device_count()
     if device_count == 0:
-        raise ValueError("No GPUs found")
+        raise ValueError("No devices found")
     if options.gpu_ids:
         try:
             gpu_ids = []
@@ -152,32 +319,22 @@ def check_gpu_memory(
     available_gpus = []
     max_workers_per_gpu = {}
 
-    pynvml.nvmlInit()
-    try:
-        for gpu_id in gpu_ids:
-            try:
-                handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
-                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-
-                total_memory = int(mem_info.total) / (1024**3)  # Bytes to GB
-                used_memory = int(mem_info.used) / (1024**3)  # Bytes to GB
-                free_memory = total_memory - used_memory
-
-                max_workers = int(free_memory // required_memory)
-                if max_workers >= 1:
-                    available_gpus.append(gpu_id)
-                    max_workers_per_gpu[gpu_id] = (
-                        max_workers
-                        if num_workers_per_gpu == -1
-                        else min(max_workers, num_workers_per_gpu)
-                    )
-            except pynvml.NVMLError as e:
-                print(f"[WARNING] Failed to check GPU {gpu_id}: {str(e)}", flush=True)
-                continue
-
-    finally:
-        pynvml.nvmlShutdown()
-
+    for gpu_id in gpu_ids:
+        try:
+            total_memory, used_memory = get_memory_info(gpu_id)
+            free_memory = total_memory - used_memory
+            max_workers = int(free_memory // required_memory)
+            if max_workers >= 1:
+                available_gpus.append(gpu_id)
+                max_workers_per_gpu[gpu_id] = (
+                    max_workers
+                    if num_workers_per_gpu == -1
+                    else min(max_workers, num_workers_per_gpu)
+                )
+        except pynvml.NVMLError as e:
+            print(f"[WARNING] Failed to check GPU {gpu_id}: {str(e)}", flush=True)
+            continue
+        
     return available_gpus, max_workers_per_gpu
 
 
@@ -276,25 +433,20 @@ def run_test_case(api_config_str, options):
         flush=True,
     )
 
-    pynvml.nvmlInit()
-    try:
-        while True:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
-            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            free_memory = int(mem_info.free) / (1024**3)  # Bytes to GB
+    while True:
+        total_memory, used_memory = get_memory_info(gpu_id)
+        free_memory = total_memory - used_memory
 
-            if free_memory >= options.required_memory:
-                break
+        if free_memory >= options.required_memory:
+            break
 
-            print(
-                f"{datetime.now()} GPU {gpu_id} Free: {free_memory:.1f} GB, "
-                f"Required: {options.required_memory:.1f} GB. ",
-                "Waiting for available memory...",
-                flush=True,
-            )
-            time.sleep(60)
-    finally:
-        pynvml.nvmlShutdown()
+        print(
+            f"{datetime.now()} device {gpu_id} Free: {free_memory:.1f} GB, "
+            f"Required: {options.required_memory:.1f} GB. ",
+            "Waiting for available memory...",
+            flush=True,
+        )
+        time.sleep(60)
 
     try:
         api_config = APIConfig(api_config_str)
