@@ -1,6 +1,8 @@
 import argparse
 import os
+import hashlib
 from datetime import datetime
+from engineV2 import detect_device_type
 
 import paddle
 
@@ -9,33 +11,20 @@ from .base import APITestBase
 
 
 class APITestGPUCustomDump(APITestBase):
-    """
-    在 GPU 与自定义设备（如 XPU / 第三方定制卡）上运行同一 API case，
-    计算前向 + 反向结果，并将结果以 npz 形式落盘。
-    """
-
     def __init__(
         self,
         api_config,
-        dump_dir="report/gpu_custom_dump",
+        dump_dir="gpu_custom_dump",
         test_amp=False,
-        gpu_id=0,
-        custom_device_type=None,
-        custom_device_id=0,
     ):
         super().__init__(api_config)
         self.dump_dir = dump_dir
         self.test_amp = test_amp
-        self.gpu_id = gpu_id
-        self.custom_device_type = custom_device_type
-        self.custom_device_id = custom_device_id
 
-    # -------------------- 设备与落盘相关工具函数 --------------------
     def _ensure_dirs(self, path):
         os.makedirs(path, exist_ok=True)
 
     def _to_tensor_list(self, x):
-        """将输出 / 梯度统一转换成 Tensor 列表，便于直接序列化保存。"""
         if x is None:
             return None
         if isinstance(x, paddle.Tensor):
@@ -46,11 +35,6 @@ class APITestGPUCustomDump(APITestBase):
         return None
 
     def _dump_results(self, tag, output, grads):
-        """
-        将指定设备的前向 / 反向结果直接保存为 Tensor 列表（使用 paddle.save）：
-          <dump_dir>/<sanitized_api_name>/{tag}_forward.pdtensor
-          <dump_dir>/<sanitized_api_name>/{tag}_grad.pdtensor
-        """
         api_name = self.api_config.config.replace("/", "_").replace(" ", "_")
         dump_path = os.path.join(self.dump_dir, api_name)
         self._ensure_dirs(dump_path)
@@ -58,18 +42,24 @@ class APITestGPUCustomDump(APITestBase):
         out_list = self._to_tensor_list(output)
         grad_list = self._to_tensor_list(grads)
 
+        key = f"{tag}-{api_name}"
+        sha16 = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+        file_prefix = f"{tag}-{api_name}-{sha16}"
+
+        forward_path = None
+        grad_path = None
+
         if out_list is not None:
-            paddle.save(out_list, os.path.join(dump_path, f"{tag}_forward.pdtensor"))
+            forward_path = os.path.join(dump_path, f"{file_prefix}_forward.pdtensor")
+            paddle.save(out_list, forward_path)
+
         if grad_list is not None:
-            paddle.save(grad_list, os.path.join(dump_path, f"{tag}_grad.pdtensor"))
+            grad_path = os.path.join(dump_path, f"{file_prefix}_grad.pdtensor")
+            paddle.save(grad_list, grad_path)
+
+        return forward_path, grad_path
 
     def _run_on_device(self, device_str):
-        """
-        在指定设备上运行一次前向 + 反向，返回 (output, grads)。
-        device_str 形如：'gpu:0', 'xpu:0', 'iluvatar_gpu:0' 等。
-        """
-        import paddle
-
         try:
             paddle.set_device(device_str)
         except Exception as e:
@@ -80,7 +70,6 @@ class APITestGPUCustomDump(APITestBase):
             print(f"[gen_paddle_input failed] device={device_str}", flush=True)
             return None, None
 
-        # 前向
         try:
             if self.test_amp:
                 with paddle.amp.auto_cast():
@@ -91,7 +80,6 @@ class APITestGPUCustomDump(APITestBase):
             print(f"[forward error] device={device_str}  {self.api_config.config}\n{err}", flush=True)
             return None, None
 
-        # 反向
         out_grads = None
         if self.need_check_grad():
             inputs_list = self.get_paddle_input_list()
@@ -126,14 +114,11 @@ class APITestGPUCustomDump(APITestBase):
 
         return output, out_grads
 
-    # -------------------- 主流程：GPU vs Custom 设备 --------------------
     def test(self):
-        # 1. 是否跳过
         if self.need_skip():
             print("[Skip]", self.api_config.config, flush=True)
             return
 
-        # 2. 解析 Paddle API 信息 & 生成 numpy 输入
         if not self.ana_paddle_api_info():
             print("[ana_paddle_api_info failed]", self.api_config.config, flush=True)
             return
@@ -146,59 +131,64 @@ class APITestGPUCustomDump(APITestBase):
             print("[numpy error]", self.api_config.config, "\n", str(err), flush=True)
             return
 
-        # 3. 确定 GPU / 自定义设备字符串
-        gpu_device_str = f"gpu:{self.gpu_id}"
+        device_type = detect_device_type()
+        try:
+            if paddle.device.is_compiled_with_cuda():
+                device_type = "gpu"
+            elif paddle.device.is_compiled_with_xpu():
+                device_type = "xpu"
+            else:
+                custom_types = paddle.device.get_all_custom_device_type()
+                if custom_types:
+                    device_type = custom_types[0]
+        except Exception as e:
+            print(f"[detect device error] {e}", flush=True)
+            return
 
-        if self.custom_device_type is None:
-            # 自动探测：优先 XPU，再尝试自定义设备
-            try:
-                if paddle.device.is_compiled_with_xpu():
-                    self.custom_device_type = "xpu"
-                else:
-                    custom_types = paddle.device.get_all_custom_device_type()
-                    if custom_types:
-                        self.custom_device_type = custom_types[0]
-                    else:
-                        print(
-                            "[no custom device available] "
-                            "compiled_without_xpu and no custom_device_type found.",
-                            self.api_config.config,
-                            flush=True,
-                        )
-                        return
-            except Exception as e:
-                print(f"[detect custom device error] {e}", flush=True)
-                return
+        if device_type is None:
+            print("[no available device]", self.api_config.config, flush=True)
+            return
 
-        custom_device_str = (
-            f"{self.custom_device_type}:{self.custom_device_id}"
-            if self.custom_device_type != "xpu"
-            else f"xpu:{self.custom_device_id}"
-        )
+        device_str = f"{device_type}:0"
 
         print(
             f"{datetime.now()} [Begin] {self.api_config.config}\n"
-            f"  GPU device   : {gpu_device_str}\n"
-            f"  Custom device: {custom_device_str}",
+            f"  Device: {device_str}",
             flush=True,
         )
 
-        # 4. GPU 上运行
-        gpu_out, gpu_grads = self._run_on_device(gpu_device_str)
-        if gpu_out is None:
-            print("[gpu execution failed]", self.api_config.config, flush=True)
+        out, grads = self._run_on_device(device_str)
+        if out is None:
+            print(f"[{device_str} execution failed]", self.api_config.config, flush=True)
         else:
-            self._dump_results("gpu", gpu_out, gpu_grads)
-            print("[gpu dump done]", self.api_config.config, flush=True)
+            forward_path, grad_path = self._dump_results(device_type, out, grads)
+            print(f"[{device_type} dump done]", self.api_config.config, flush=True)
 
-        # 5. 自定义设备 / XPU 上运行
-        custom_out, custom_grads = self._run_on_device(custom_device_str)
-        if custom_out is None:
-            print(f"[{custom_device_str} execution failed]", self.api_config.config, flush=True)
-        else:
-            tag = self.custom_device_type if self.custom_device_type is not None else "custom"
-            self._dump_results(tag, custom_out, custom_grads)
-            print(f"[{tag} dump done]", self.api_config.config, flush=True)
+            if forward_path is not None:
+                try:
+                    loaded_forward = paddle.load(forward_path)
+                    print(f"[loaded forward] {forward_path}")
+                    for i, t in enumerate(loaded_forward):
+                        arr = t.numpy().flatten()
+                        print(
+                            f"  forward[{i}] shape={t.shape}, dtype={t.dtype}, "
+                            f"first_values={arr[:10]}"
+                        )
+                except Exception as e:
+                    print(f"[load forward error] {forward_path} -> {e}", flush=True)
+
+            if grad_path is not None:
+                try:
+                    loaded_grads = paddle.load(grad_path)
+                    print(f"[loaded grad] {grad_path}")
+                    for i, t in enumerate(loaded_grads):
+                        arr = t.numpy().flatten()
+                        print(
+                            f"  grad[{i}] shape={t.shape}, dtype={t.dtype}, "
+                            f"first_values={arr[:10]}"
+                        )
+                except Exception as e:
+                    print(f"[load grad error] {grad_path} -> {e}", flush=True)
 
 
 def parse_bool(v):
@@ -213,45 +203,21 @@ def parse_bool(v):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="在 GPU / 自定义设备 上运行 API case，并将前向 + 反向结果以 npz 落盘。"
-    )
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "--api_config",
         type=str,
         required=True,
-        help="单条 API 配置（与 engine 中的 api_config 字符串格式一致）",
     )
     parser.add_argument(
         "--dump_dir",
         type=str,
         default="report/gpu_custom_dump",
-        help="结果保存目录（npz 文件会按 API 配置分子目录存放）",
     )
     parser.add_argument(
         "--test_amp",
         type=parse_bool,
         default=False,
-        help="是否在前向中启用 AMP 自动混合精度",
-    )
-    parser.add_argument(
-        "--gpu_id",
-        type=int,
-        default=0,
-        help="使用的 GPU 设备号（形如 gpu:<gpu_id>）",
-    )
-    parser.add_argument(
-        "--custom_device_type",
-        type=str,
-        default=None,
-        help="自定义设备类型名称，例如 'xpu'、'iluvatar_gpu' 等；"
-        "留空则自动探测：优先 XPU，再尝试 paddle 自定义设备。",
-    )
-    parser.add_argument(
-        "--custom_device_id",
-        type=int,
-        default=0,
-        help="自定义设备 ID，如 xpu:0 / iluvatar_gpu:0 中的 0",
     )
 
     args = parser.parse_args()
@@ -268,9 +234,6 @@ def main():
         api_config,
         dump_dir=args.dump_dir,
         test_amp=args.test_amp,
-        gpu_id=args.gpu_id,
-        custom_device_type=args.custom_device_type,
-        custom_device_id=args.custom_device_id,
     )
     try:
         case.test()
@@ -282,5 +245,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
