@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         APITestPaddleTorchGPUPerformance,
         APITestAccuracyStable,
         APITestCustomDeviceVSCPU,
+        APITestPaddleDeviceVSGPU,
     )
     import torch
     import paddle
@@ -38,7 +39,10 @@ from tester.api_config.log_writer import *
 os.environ["FLAGS_use_system_allocator"] = "1"
 os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
 
-VALID_TEST_ARGS = {"test_amp", "test_backward", "atol", "rtol", "test_tol"}
+VALID_TEST_ARGS = {
+    "test_amp", "test_backward", "atol", "rtol", "test_tol",
+    "operation_mode", "bos_path", "target_device_type", "random_seed"
+}
 
 DEVICE_TYPE = None
 DEVICE_TYPE_DETECTED = False
@@ -384,7 +388,8 @@ def init_worker_gpu(
                             APITestPaddleOnly,
                             APITestPaddleTorchGPUPerformance,
                             APITestTorchGPUPerformance,
-                            APITestCustomDeviceVSCPU)
+                            APITestCustomDeviceVSCPU,
+                            APITestPaddleDeviceVSGPU)
 
         test_classes = {
             "APIConfig": APIConfig,
@@ -395,7 +400,8 @@ def init_worker_gpu(
             "APITestTorchGPUPerformance": APITestTorchGPUPerformance,
             "APITestPaddleTorchGPUPerformance": APITestPaddleTorchGPUPerformance,
             "APITestAccuracyStable": APITestAccuracyStable,
-            "APITestCustomDeviceVSCPU": APITestCustomDeviceVSCPU
+            "APITestCustomDeviceVSCPU": APITestCustomDeviceVSCPU,
+            "APITestPaddleDeviceVSGPU": APITestPaddleDeviceVSGPU
         }
         globals().update(test_classes)
 
@@ -466,6 +472,7 @@ def run_test_case(api_config_str, options):
         "paddle_torch_gpu_performance": APITestPaddleTorchGPUPerformance,
         "accuracy_stable": APITestAccuracyStable,
         "paddle_custom_device": APITestCustomDeviceVSCPU,
+        "custom_device_vs_gpu": APITestPaddleDeviceVSGPU,
     }
     test_class = next(
         (cls for opt, cls in option_to_class.items() if getattr(options, opt, False)),
@@ -646,6 +653,30 @@ def main():
         default=0,
         help="The numpy random seed ",
     )
+    parser.add_argument(
+        "--custom_device_vs_gpu",
+        type=parse_bool,
+        default=False,
+        help="test paddle api on custom device vs GPU",
+    )
+    parser.add_argument(
+        "--operation_mode",
+        type=str,
+        choices=["upload", "download"],
+        help="Operation mode: upload or download",
+    )
+    parser.add_argument(
+        "--bos_path",
+        type=str,
+        default="",
+        help="BOS storage path (required when operation_mode is specified)",
+    )
+    parser.add_argument(
+        "--target_device_type",
+        type=str,
+        choices=["gpu", "paddle_device"],
+        help="Target device type for download mode",
+    )
 
     options = parser.parse_args()
     print(f"Options: {vars(options)}", flush=True)
@@ -661,6 +692,7 @@ def main():
         options.paddle_torch_gpu_performance,
         options.accuracy_stable,
         options.paddle_custom_device,
+        options.custom_device_vs_gpu,
     ]
     if len([m for m in mode if m is True]) != 1:
         print(
@@ -673,10 +705,18 @@ def main():
             "--paddle_torch_gpu_performance"
             "--accuracy_stable"
             "--paddle_custom_device"
+            "--custom_device_vs_gpu"
             " to True.",
             flush=True,
         )
         return
+    if options.custom_device_vs_gpu:
+        if options.operation_mode and not options.bos_path:
+            print("--bos_path is required when --operation_mode is specified", flush=True)
+            return
+        if options.operation_mode == "download" and not options.target_device_type:
+            print("--target_device_type is required in download mode", flush=True)
+            return
     if options.test_tol and not options.accuracy:
         print(f"--test_tol takes effect when --accuracy is True.", flush=True)
     if options.test_backward and not options.paddle_cinn:

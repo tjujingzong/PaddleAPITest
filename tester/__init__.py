@@ -12,6 +12,7 @@ __all__ = [
     'APITestPaddleTorchGPUPerformance',
     'APITestAccuracyStable',
     'APITestCustomDeviceVSCPU',
+    'APITestPaddleDeviceVSGPU',
     'paddle_to_torch',
     'TensorConfig', 
     'APIConfig', 
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from .paddle_cinn_vs_dygraph import APITestCINNVSDygraph
     from .accuracy_stable import APITestAccuracyStable
     from .paddle_device_vs_cpu import APITestCustomDeviceVSCPU
+    from .paddle_device_vs_gpu import APITestPaddleDeviceVSGPU
     from . import paddle_to_torch
     from .api_config import (
         TensorConfig,
@@ -74,6 +76,9 @@ def __getattr__(name: str) -> Any:
     elif name == 'APITestCustomDeviceVSCPU':
         from .paddle_device_vs_cpu import APITestCustomDeviceVSCPU
         return APITestCustomDeviceVSCPU
+    elif name == 'APITestPaddleDeviceVSGPU':
+        from .paddle_device_vs_gpu import APITestPaddleDeviceVSGPU
+        return APITestPaddleDeviceVSGPU
     elif name == 'paddle_to_torch':
         from . import paddle_to_torch
         return paddle_to_torch
