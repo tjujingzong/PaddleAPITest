@@ -12,25 +12,26 @@ import time
 from concurrent.futures import TimeoutError, as_completed
 from datetime import datetime
 from multiprocessing import Lock, Manager, cpu_count, set_start_method
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pynvml
 from pebble import ProcessExpired, ProcessPool
 
-
-from tester import (
-    APIConfig,
-    APITestAccuracy,
-    APITestCINNVSDygraph,
-    APITestPaddleOnly,
-    APITestPaddleGPUPerformance,
-    APITestTorchGPUPerformance,
-    APITestPaddleTorchGPUPerformance,
-    APITestAccuracyStable,
-    APITestCustomDeviceVSCPU,
-)
-import torch
-import paddle
+if TYPE_CHECKING:
+    from tester import (
+        APIConfig,
+        APITestAccuracy,
+        APITestCINNVSDygraph,
+        APITestPaddleOnly,
+        APITestPaddleGPUPerformance,
+        APITestTorchGPUPerformance,
+        APITestPaddleTorchGPUPerformance,
+        APITestAccuracyStable,
+        APITestCustomDeviceVSCPU,
+    )
+    import torch
+    import paddle
 
 from tester.api_config.log_writer import *
 
