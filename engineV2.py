@@ -135,7 +135,7 @@ def detect_device_type() -> str:
         try:
             out = subprocess.check_output(["ixsmi"], text=True, stderr=subprocess.STDOUT)
             if any(re.match(r"^\|\s*\d+\s+Iluvatar", line) for line in out.splitlines()):
-                DEVICE_TYPE = "iluvatar"
+                DEVICE_TYPE = "iluvatar_gpu"
                 DEVICE_TYPE_DETECTED = True
                 return DEVICE_TYPE
         except Exception:
@@ -175,7 +175,7 @@ def get_device_count() -> int:
         DEVICE_COUNT = len(ids)
         return DEVICE_COUNT
 
-    if device_type == "iluvatar":
+    if device_type == "iluvatar_gpu":
         out = subprocess.check_output(["ixsmi"], text=True, stderr=subprocess.STDOUT)
         ids = set()
         for line in out.splitlines():
@@ -214,7 +214,7 @@ def _refresh_snapshot(device_type):
                         snapshot[dev_id] = (total_mib / 1024.0, used_mib / 1024.0)
                         break
 
-    elif device_type == "iluvatar":
+    elif device_type == "iluvatar_gpu":
         out = subprocess.check_output(["ixsmi"], text=True, stderr=subprocess.STDOUT)
         lines = out.splitlines()
         for i, line in enumerate(lines):
@@ -251,7 +251,7 @@ def get_memory_info(gpu_id):
         finally:
             pynvml.nvmlShutdown()
 
-    if device_type in ("xpu", "iluvatar"):
+    if device_type in ("xpu", "iluvatar_gpu"):
         _refresh_snapshot(device_type)
         if _MEM_SNAPSHOT is None or gpu_id not in _MEM_SNAPSHOT:
             raise RuntimeError(f"Failed to get memory info for {device_type} device {gpu_id}")
