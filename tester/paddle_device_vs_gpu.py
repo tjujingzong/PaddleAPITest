@@ -44,18 +44,9 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
         return hashlib.md5(config_str.encode()).hexdigest()[:16]
 
     def _get_local_device_type(self):
-        """获取当前设备的类型"""
-        try:
-            if torch.cuda.is_available():  # 检查GPU是否可用
-                return "gpu"
-            elif self.check_xpu_available():
-                return "xpu"
-            elif self.check_custom_device_available():
-                return self.custom_device_type
-            else:
-                return "cpu"
-        except:
-            return "cpu"
+        """获取当前设备的类型，优先复用 engineV2 的检测逻辑。"""
+        from engineV2 import detect_device_type
+        return detect_device_type()
 
     def _get_filename(self, device_type=None):
         """生成PDTensor文件名"""
@@ -146,75 +137,27 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
             print(f"[download] Download failed: {e}", flush=True)
             return None
 
-    def _run_paddle_on_gpu(self):
-        """在GPU上运行Paddle实现"""
+    def _run_paddle(self, device_type: str):
+        """在指定设备上运行 Paddle（统一 GPU / XPU / 自定义设备逻辑）。"""
         try:
-            # 设置GPU设备
-            paddle.set_device("gpu:0")
-
-            # 解析Paddle API信息
-            if not self.ana_paddle_api_info():
-                print("ana_paddle_api_info failed", flush=True)
-                return None, None
-
-            # 生成输入数据
-            if not self.gen_numpy_input():
-                print("gen_numpy_input failed", flush=True)
-                return None, None
-
-            if not self.gen_paddle_input():
-                print("gen_paddle_input failed", flush=True)
-                return None, None
-
-            # 执行Forward
-            paddle_output = self.paddle_api(
-                *tuple(self.paddle_args), **self.paddle_kwargs
-            )
-
-            # 执行Backward（如果需要）
-            paddle_grads = None
-            if self.need_check_grad():
-                inputs_list = self.get_paddle_input_list()
-                result_outputs, result_outputs_grads = (
-                    self.gen_paddle_output_and_output_grad(paddle_output)
-                )
-                if inputs_list and result_outputs and result_outputs_grads:
-                    paddle_grads = paddle.grad(
-                        outputs=result_outputs,
-                        inputs=inputs_list,
-                        grad_outputs=result_outputs_grads,
-                        allow_unused=True,
-                    )
-
-            return paddle_output, paddle_grads
-
-        except Exception as e:
-            print(f"[paddle gpu error] {self.api_config.config}: {e}", flush=True)
-            write_to_log("paddle_error", self.api_config.config)
-            return None, None
-
-    def _run_paddle_on_custom_device(self):
-        """在Paddle自定义设备上运行"""
-        try:
-            paddle_device_type = "cpu"  # 默认为CPU
-
-            # 设置自定义设备
-            if self.check_xpu_available():
+            paddle_device_type = device_type
+            if device_type == "gpu":
+                # engineV2.py sets CUDA_VISIBLE_DEVICES, so paddle will use the correct GPU.
+                paddle.set_device("gpu")
+            elif device_type == "xpu":
                 paddle.set_device(f"xpu:{self.xpu_device_id}")
-                paddle_device_type = "xpu"
-            elif self.check_custom_device_available():
+            elif device_type == self.custom_device_type and self.check_custom_device_available():
                 paddle.set_device(f"{self.custom_device_type}:{self.custom_device_id}")
-                paddle_device_type = self.custom_device_type
+            elif device_type == "cpu":
+                paddle.set_device("cpu")
             else:
                 print(f"[error] No custom device available", flush=True)
                 return None, None
 
-            # 解析Paddle API信息
             if not self.ana_paddle_api_info():
                 print("ana_paddle_api_info failed", flush=True)
                 return None, None
 
-            # 生成输入数据
             if not self.gen_numpy_input():
                 print("gen_numpy_input failed", flush=True)
                 return None, None
@@ -223,12 +166,10 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
                 print("gen_paddle_input failed", flush=True)
                 return None, None
 
-            # 执行Forward
             paddle_output = self.paddle_api(
                 *tuple(self.paddle_args), **self.paddle_kwargs
             )
 
-            # 执行Backward（如果需要）
             paddle_grads = None
             if self.need_check_grad():
                 inputs_list = self.get_paddle_input_list()
@@ -399,22 +340,18 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
         elif self.operation_mode == "download":
             self._test_download_mode()
         else:
-            # 默认模式：本地直接对比
-            print("[info] No operation mode specified, running in local mode")
-            self._test_local_mode()
+            print(
+                "[error] operation_mode 不能为空，请指定 --operation_mode=upload 或 download",
+                flush=True,
+            )
+            return
 
     def _test_upload_mode(self):
         """Upload模式：执行测试并上传结果"""
         print(f"[upload] Starting upload mode for {self.api_config.config}", flush=True)
 
         local_device_type = self._get_local_device_type()
-
-        if local_device_type == "gpu":
-            # GPU端：使用Paddle在GPU上执行
-            output, grads = self._run_paddle_on_gpu()
-        else:
-            # PaddleDevice端：使用Paddle在自定义设备上执行
-            output, grads = self._run_paddle_on_custom_device()
+        output, grads = self._run_paddle(local_device_type)
 
         if output is None:
             print(f"[upload] Execution failed for {self.api_config.config}", flush=True)
@@ -451,13 +388,7 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
 
         # 在本地设备上执行测试
         local_device_type = self._get_local_device_type()
-
-        if local_device_type == "gpu":
-            # GPU端：使用Paddle在GPU上执行
-            local_output, local_grads = self._run_paddle_on_gpu()
-        else:
-            # PaddleDevice端：使用Paddle在自定义设备上执行
-            local_output, local_grads = self._run_paddle_on_custom_device()
+        local_output, local_grads = self._run_paddle(local_device_type)
 
         if local_output is None:
             print(
@@ -476,16 +407,5 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
 
         print(
             f"[download] Download mode completed for {self.api_config.config}",
-            flush=True,
-        )
-
-    def _test_local_mode(self):
-        """默认模式：本地直接对比（暂不支持）"""
-        print(
-            f"[local] Local mode not implemented yet for {self.api_config.config}",
-            flush=True,
-        )
-        print(
-            "[info] Please specify --operation_mode=upload or --operation_mode=download",
             flush=True,
         )
