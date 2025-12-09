@@ -40,8 +40,17 @@ os.environ["FLAGS_use_system_allocator"] = "1"
 os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
 
 VALID_TEST_ARGS = {
-    "test_amp", "test_backward", "atol", "rtol", "test_tol",
-    "operation_mode", "bos_path", "target_device_type", "random_seed"
+    "test_amp",
+    "test_backward",
+    "atol",
+    "rtol",
+    "test_tol",
+    "operation_mode",
+    "bos_path",
+    "target_device_type",
+    "random_seed",
+    "bos_conf_path",
+    "bcecmd_path",
 }
 
 DEVICE_TYPE = None
@@ -670,6 +679,18 @@ def main():
         type=str,
         default="",
         help="BOS storage path (required when operation_mode is specified)",
+    )
+    parser.add_argument(
+        "--bos_conf_path",
+        type=str,
+        default="./conf",
+        help="Path for bcecmd --conf-path when using BOS",
+    )
+    parser.add_argument(
+        "--bcecmd_path",
+        type=str,
+        default="./bcecmd",
+        help="bcecmd binary path used for BOS upload/download",
     )
     parser.add_argument(
         "--target_device_type",
