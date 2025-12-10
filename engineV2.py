@@ -695,8 +695,14 @@ def main():
     parser.add_argument(
         "--target_device_type",
         type=str,
-        choices=["gpu", "paddle_device"],
+        choices=["gpu", "xpu", "iluvatar_gpu"],
         help="Target device type for download mode",
+    )
+    parser.add_argument(
+        "--bitwise_alignment",
+        type=bool,
+        default=False,
+        help="Whether to using bitwise alignment when run accuracy test",
     )
 
     options = parser.parse_args()
@@ -743,7 +749,9 @@ def main():
     if options.test_backward and not options.paddle_cinn:
         print(f"--test_backward takes effect when --paddle_cinn is True.", flush=True)
     os.environ["USE_CACHED_NUMPY"] = str(options.use_cached_numpy)
-
+    if options.bitwise_alignment:
+        options.atol=0.0
+        options.rtol=0.0
     if options.log_dir:
         set_test_log_path(options.log_dir)
 
@@ -792,6 +800,8 @@ def main():
                 atol=options.atol,
                 rtol=options.rtol,
                 test_tol=options.test_tol,
+                bitwise_alignment = options.bitwise_alignment
+                
             )
         else:
             case = test_class(api_config, test_amp=options.test_amp)

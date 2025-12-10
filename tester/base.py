@@ -840,8 +840,8 @@ class APITestBase:
         if np_paddle.dtype == numpy.bool_:
             numpy.testing.assert_equal(np_paddle, np_torch)
             return
-
-        if self.api_config.api_name in special_accuracy_atol_rtol:
+        bitwise_alignment = getattr(self, "bitwise_alignment", False)
+        if not bitwise_alignment and self.api_config.api_name in special_accuracy_atol_rtol:
             atol, rtol = special_accuracy_atol_rtol[self.api_config.api_name]
 
         numpy.testing.assert_allclose(
@@ -880,8 +880,8 @@ class APITestBase:
                 f"DESIRED: (shape={converted_paddle_tensor.shape}, dtype={converted_paddle_tensor.dtype})\n"
                 f"{converted_paddle_tensor}"
             )
-
-        if self.api_config.api_name in special_accuracy_atol_rtol:
+        bitwise_alignment = getattr(self, "bitwise_alignment", False)
+        if not bitwise_alignment and self.api_config.api_name in special_accuracy_atol_rtol:
             atol, rtol = special_accuracy_atol_rtol[self.api_config.api_name]
 
         try:
@@ -930,15 +930,14 @@ class APITestBase:
                 f"DESIRED: (shape={torch_tensor.shape}, dtype={torch_tensor.dtype})\n"
                 f"{torch_tensor}"
             )
-
-        if self.api_config.api_name in special_accuracy_atol_rtol:
+        bitwise_alignment = getattr(self, "bitwise_alignment", False)
+        
+        if not bitwise_alignment and self.api_config.api_name in special_accuracy_atol_rtol:
             atol, rtol = special_accuracy_atol_rtol[self.api_config.api_name]
-
         test_tol = getattr(self, "test_tol", False)
         is_backward = getattr(self, "is_backward", False)
         if test_tol:
             atol, rtol = 0.0, 0.0
-
         try:
             torch.testing.assert_close(
                 converted_paddle_tensor,

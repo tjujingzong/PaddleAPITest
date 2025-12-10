@@ -86,6 +86,7 @@
 | `--timeout`                      | int   | 单个测试用例执行超时秒数（默认 1800）                                                  |
 | `--show_runtime_status`          | bool  | 是否实时显示当前的测试进度（默认 True）                                               |
 | `--random_seed`                  | int   | numpy random的随机种子(默认为0，此时不会显式设置numpy random的seed)                   |
+| `--bitwise_alignment`            | bool  | 是否进行诸位对齐对比，开启后所有的api的精度对比都按照atol=0.0,rtol = 0.0的精度对比结果|
 
 
 ### 示例命令
