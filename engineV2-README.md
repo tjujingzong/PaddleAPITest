@@ -92,6 +92,7 @@
 | `--bos_conf_path`                | str   | BOS 配置文件路径（默认 `./conf`）                                                      |
 | `--bcecmd_path`                  | str   | bcecmd 命令行工具路径（默认 `./bcecmd`）                                               |
 | `--target_device_type`           | str   | 目标设备类型（如 `xpu`），仅在 `operation_mode=download` 时使用                        |
+| `--bitwise_alignment`            | bool  | 是否进行诸位对齐对比，开启后所有的api的精度对比都按照atol=0.0,rtol = 0.0的精度对比结果|
 
 
 ### 示例命令
