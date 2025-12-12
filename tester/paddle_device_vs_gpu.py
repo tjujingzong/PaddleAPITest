@@ -40,6 +40,10 @@ def _download_worker(args):
     """预下载 worker 函数（在独立进程中运行）"""
     filename, bos_path, bcecmd_path, bos_conf_path = args
     
+    # 确保路径都是字符串
+    bcecmd_path = str(bcecmd_path)
+    bos_conf_path = str(bos_conf_path)
+    
     # 检查是否已下载
     local_path = _get_local_cache_path(filename)
     if local_path.exists():
@@ -53,7 +57,7 @@ def _download_worker(args):
     
     # 执行下载
     cmd = [
-        str(bcecmd_path),
+        bcecmd_path,
         "--conf-path",
         bos_conf_path,
         "bos",
@@ -63,24 +67,38 @@ def _download_worker(args):
     ]
     
     try:
+        # 打印完整命令以便调试
+        cmd_str = " ".join(cmd)
         print(f"[pre-download] Downloading {filename}...", flush=True)
+        print(f"[pre-download] Command: {cmd_str}", flush=True)
+        print(f"[pre-download] Target path: {local_path}", flush=True)
+        
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        # 打印命令输出以便调试
+        if result.stdout:
+            print(f"[pre-download] stdout: {result.stdout[:200]}", flush=True)
+        if result.stderr:
+            print(f"[pre-download] stderr: {result.stderr[:200]}", flush=True)
+        
         if result.returncode == 0:
             # 验证文件确实存在
             if local_path.exists():
-                print(f"[pre-download] Successfully downloaded: {filename}", flush=True)
+                print(f"[pre-download] Successfully downloaded: {filename} -> {local_path}", flush=True)
                 return filename, True
             else:
-                print(f"[pre-download] Download command succeeded but file not found: {filename}", flush=True)
+                print(f"[pre-download] Download command succeeded but file not found: {local_path}", flush=True)
                 return filename, False
         else:
             print(
-                f"[pre-download] Failed to download {filename}, stderr: {result.stderr}",
+                f"[pre-download] Failed to download {filename}, returncode: {result.returncode}, stderr: {result.stderr}",
                 flush=True,
             )
             return filename, False
     except Exception as e:
         print(f"[pre-download] Error downloading {filename}: {e}", flush=True)
+        import traceback
+        print(f"[pre-download] Traceback: {traceback.format_exc()}", flush=True)
         return filename, False
 
 
@@ -100,7 +118,15 @@ def start_pre_download_pool(api_config_file, target_device_type, random_seed,
         print(f"[pre-download] No valid api_config_file provided, skip pre-download", flush=True)
         return
     
+    # 确保路径都是字符串
+    bcecmd_path = str(bcecmd_path)
+    bos_conf_path = str(bos_conf_path)
+    
     print(f"[pre-download] Starting pre-download pool with {PRE_DOWNLOAD_WORKERS} workers", flush=True)
+    print(f"[pre-download] Cache directory: {CACHE_DIR}", flush=True)
+    print(f"[pre-download] BOS path: {bos_path}", flush=True)
+    print(f"[pre-download] bcecmd path: {bcecmd_path}", flush=True)
+    print(f"[pre-download] bcecmd conf path: {bos_conf_path}", flush=True)
     
     # 读取配置文件，计算所有需要的文件名
     filenames = []
@@ -129,11 +155,18 @@ def start_pre_download_pool(api_config_file, target_device_type, random_seed,
         
         print(f"[pre-download] Found {len(filenames)} files to download", flush=True)
         
-        # 准备下载任务参数
+        # 去重：确保每个文件只下载一次（多个进程不会下载同一个文件）
+        unique_filenames = list(set(filenames))
+        if len(unique_filenames) != len(filenames):
+            print(f"[pre-download] Removed {len(filenames) - len(unique_filenames)} duplicate filenames", flush=True)
+        
+        # 准备下载任务参数（每个文件一个任务，PRE_DOWNLOAD_WORKERS 个进程并行下载不同文件）
         download_tasks = [
             (filename, bos_path, bcecmd_path, bos_conf_path)
-            for filename in filenames
+            for filename in unique_filenames
         ]
+        
+        print(f"[pre-download] Prepared {len(download_tasks)} download tasks", flush=True)
         
         # 启动进程池执行下载
         with ProcessPoolExecutor(max_workers=PRE_DOWNLOAD_WORKERS) as executor:
