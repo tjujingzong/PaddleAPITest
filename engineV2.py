@@ -515,6 +515,22 @@ def run_test_case(api_config_str, options):
             paddle.device.cuda.empty_cache()
 
 
+def _pre_download_entry(config_files, target_device_type, random_seed, bos_path, bcecmd_path, bos_conf_path):
+    try:
+        from tester.paddle_device_vs_gpu import start_pre_download_pool
+        for cfg_file in config_files:
+            start_pre_download_pool(
+                cfg_file,
+                target_device_type,
+                random_seed,
+                bos_path,
+                bcecmd_path,
+                bos_conf_path,
+            )
+    except Exception as e:
+        print(f"[pre-download] Background pre-download failed: {e}", flush=True)
+
+
 def main():
     start_time = time.time()
     print(f"Main process id: {os.getpid()}")
@@ -805,32 +821,35 @@ def main():
             )
         else:
             case = test_class(api_config, test_amp=options.test_amp)
-        # start pre-download pool when running single case in download mode
+        # start pre-download in background for single case (non-blocking)
         if options.custom_device_vs_gpu and options.operation_mode == "download":
             try:
-                from tester.paddle_device_vs_gpu import start_pre_download_pool
-                import tempfile, os
+                import multiprocessing as mp
+                import tempfile
                 tmp_file = None
                 try:
                     with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", suffix=".txt") as tf:
                         tf.write(options.api_config.strip() + "\n")
                         tmp_file = tf.name
-                    start_pre_download_pool(
-                        tmp_file,
-                        options.target_device_type,
-                        options.random_seed,
-                        options.bos_path,
-                        options.bcecmd_path,
-                        options.bos_conf_path,
+                    p = mp.Process(
+                        target=_pre_download_entry,
+                        args=(
+                            [tmp_file],
+                            options.target_device_type,
+                            options.random_seed,
+                            options.bos_path,
+                            options.bcecmd_path,
+                            options.bos_conf_path,
+                        ),
                     )
+                    p.daemon = True
+                    p.start()
+                    print(f"[pre-download] Background pre-download (single) started, pid={p.pid}", flush=True)
                 finally:
-                    if tmp_file and os.path.exists(tmp_file):
-                        try:
-                            os.unlink(tmp_file)
-                        except Exception:
-                            pass
+                    # 不立刻删除临时文件，避免子进程尚未读取；交由子进程结束后自行清理或系统清理
+                    pass
             except Exception as e:
-                print(f"[pre-download] Failed to start pre-download pool for single case: {e}", flush=True)
+                print(f"[pre-download] Failed to start background pre-download for single case: {e}", flush=True)
         try:
             case.test()
         except Exception as err:
@@ -867,21 +886,26 @@ def main():
                 return
             config_files = [options.api_config_file]
 
-        # start pre-download pool (download mode of custom_device_vs_gpu)
+        # start pre-download in background (non-blocking)
         if options.custom_device_vs_gpu and options.operation_mode == "download":
             try:
-                from tester.paddle_device_vs_gpu import start_pre_download_pool
-                for cfg_file in config_files:
-                    start_pre_download_pool(
-                        cfg_file,
+                import multiprocessing as mp
+                p = mp.Process(
+                    target=_pre_download_entry,
+                    args=(
+                        config_files,
                         options.target_device_type,
                         options.random_seed,
                         options.bos_path,
                         options.bcecmd_path,
                         options.bos_conf_path,
-                    )
+                    ),
+                )
+                p.daemon = True
+                p.start()
+                print(f"[pre-download] Background pre-download started, pid={p.pid}", flush=True)
             except Exception as e:
-                print(f"[pre-download] Failed to start pre-download pool: {e}", flush=True)
+                print(f"[pre-download] Failed to start background pre-download: {e}", flush=True)
 
         # when engineV2 was interrupted, resume from .tmp dir
         aggregate_logs()
