@@ -12,10 +12,12 @@ import time
 from concurrent.futures import TimeoutError, as_completed
 from datetime import datetime
 from multiprocessing import Lock, Manager, cpu_count, set_start_method
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pynvml
+import yaml
 from pebble import ProcessExpired, ProcessPool
 
 if TYPE_CHECKING:
@@ -481,12 +483,16 @@ def run_test_case(api_config_str, options):
         "paddle_torch_gpu_performance": APITestPaddleTorchGPUPerformance,
         "accuracy_stable": APITestAccuracyStable,
         "paddle_custom_device": APITestCustomDeviceVSCPU,
-        "custom_device_vs_gpu": APITestPaddleDeviceVSGPU,
     }
-    test_class = next(
-        (cls for opt, cls in option_to_class.items() if getattr(options, opt, False)),
-        APITestAccuracy,  # default fallback
-    )
+    
+    # 处理 custom_device_vs_gpu 模式
+    if options.custom_device_vs_gpu:
+        test_class = APITestPaddleDeviceVSGPU
+    else:
+        test_class = next(
+            (cls for opt, cls in option_to_class.items() if getattr(options, opt, False)),
+            APITestAccuracy,  # default fallback
+        )
     kwargs = {k: v for k, v in vars(options).items() if k in VALID_TEST_ARGS}
     case = test_class(api_config, **kwargs)
     try:
@@ -664,33 +670,10 @@ def main():
     )
     parser.add_argument(
         "--custom_device_vs_gpu",
-        type=parse_bool,
-        default=False,
-        help="test paddle api on custom device vs GPU",
-    )
-    parser.add_argument(
-        "--operation_mode",
         type=str,
         choices=["upload", "download"],
-        help="Operation mode: upload or download",
-    )
-    parser.add_argument(
-        "--bos_path",
-        type=str,
-        default="",
-        help="BOS storage path (required when operation_mode is specified)",
-    )
-    parser.add_argument(
-        "--bos_conf_path",
-        type=str,
-        default="./conf",
-        help="Path for bcecmd --conf-path when using BOS",
-    )
-    parser.add_argument(
-        "--bcecmd_path",
-        type=str,
-        default="./bcecmd",
-        help="bcecmd binary path used for BOS upload/download",
+        default=None,
+        help="test paddle api on custom device vs GPU: 'upload' or 'download'",
     )
     parser.add_argument(
         "--target_device_type",
@@ -719,7 +702,7 @@ def main():
         options.paddle_torch_gpu_performance,
         options.accuracy_stable,
         options.paddle_custom_device,
-        options.custom_device_vs_gpu,
+        options.custom_device_vs_gpu is not None,
     ]
     if len([m for m in mode if m is True]) != 1:
         print(
@@ -732,16 +715,46 @@ def main():
             "--paddle_torch_gpu_performance"
             "--accuracy_stable"
             "--paddle_custom_device"
-            "--custom_device_vs_gpu"
-            " to True.",
+            "--custom_device_vs_gpu=upload or --custom_device_vs_gpu=download",
             flush=True,
         )
         return
+    
+    # 处理 custom_device_vs_gpu 模式的配置
+    bos_config_data = None
     if options.custom_device_vs_gpu:
-        if options.operation_mode and not options.bos_path:
-            print("--bos_path is required when --operation_mode is specified", flush=True)
+        # 读取 BOS 配置文件（固定路径：tester/bos_config.yaml）
+        bos_config_path = Path("tester/bos_config.yaml")
+        if not bos_config_path.exists():
+            print(f"BOS config file not found: {bos_config_path}", flush=True)
             return
-        if options.operation_mode == "download" and not options.target_device_type:
+        
+        try:
+            with open(bos_config_path, "r", encoding="utf-8") as f:
+                bos_config_data = yaml.safe_load(f)
+            
+            if not bos_config_data:
+                print(f"BOS config file is empty: {bos_config_path}", flush=True)
+                return
+            
+            # 验证必需的配置项
+            required_keys = ["bos_path", "bos_conf_path", "bcecmd_path"]
+            missing_keys = [key for key in required_keys if key not in bos_config_data]
+            if missing_keys:
+                print(f"Missing required keys in BOS config: {missing_keys}", flush=True)
+                return
+            
+            # 将配置添加到 options 中，以便传递给测试类
+            options.operation_mode = options.custom_device_vs_gpu
+            options.bos_path = bos_config_data["bos_path"]
+            options.bos_conf_path = bos_config_data["bos_conf_path"]
+            options.bcecmd_path = bos_config_data["bcecmd_path"]
+            
+        except Exception as e:
+            print(f"Failed to load BOS config file {bos_config_path}: {e}", flush=True)
+            return
+        
+        if options.custom_device_vs_gpu == "download" and not options.target_device_type:
             print("--target_device_type is required in download mode", flush=True)
             return
     if options.test_tol and not options.accuracy:
@@ -761,7 +774,8 @@ def main():
                             APITestCINNVSDygraph, APITestPaddleGPUPerformance,
                             APITestPaddleOnly,
                             APITestPaddleTorchGPUPerformance,
-                            APITestTorchGPUPerformance)
+                            APITestTorchGPUPerformance,
+                            APITestCustomDeviceVSCPU)
 
         # set log_writer
         set_engineV2()
@@ -784,16 +798,36 @@ def main():
             "accuracy_stable": APITestAccuracyStable,
             "paddle_custom_device": APITestCustomDeviceVSCPU,
         }
-        test_class = next(
-            (
-                cls
-                for opt, cls in option_to_class.items()
-                if getattr(options, opt, False)
-            ),
-            APITestAccuracy,  # default fallback
-        )
+        
+        # 处理 custom_device_vs_gpu 模式
+        if options.custom_device_vs_gpu:
+            from tester import APITestPaddleDeviceVSGPU
+            test_class = APITestPaddleDeviceVSGPU
+        else:
+            test_class = next(
+                (
+                    cls
+                    for opt, cls in option_to_class.items()
+                    if getattr(options, opt, False)
+                ),
+                APITestAccuracy,  # default fallback
+            )
 
-        if options.accuracy:
+        if options.custom_device_vs_gpu:
+            # custom_device_vs_gpu 模式需要传递额外参数
+            kwargs = {
+                "operation_mode": options.operation_mode,
+                "bos_path": options.bos_path,
+                "bos_conf_path": options.bos_conf_path,
+                "bcecmd_path": options.bcecmd_path,
+                "random_seed": options.random_seed,
+                "atol": options.atol,
+                "rtol": options.rtol,
+            }
+            if options.target_device_type:
+                kwargs["target_device_type"] = options.target_device_type
+            case = test_class(api_config, **kwargs)
+        elif options.accuracy:
             case = test_class(
                 api_config,
                 test_amp=options.test_amp,

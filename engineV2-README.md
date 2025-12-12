@@ -86,12 +86,8 @@
 | `--timeout`                      | int   | 单个测试用例执行超时秒数（默认 1800）                                                  |
 | `--show_runtime_status`          | bool  | 是否实时显示当前的测试进度（默认 True）                                               |
 | `--random_seed`                  | int   | numpy random的随机种子(默认为0，此时不会显式设置numpy random的seed)                   |
-| `--custom_device_vs_gpu`         | bool  | 运行自定义设备与GPU的精度对比测试（默认 False）                                        |
-| `--operation_mode`               | str   | 操作模式：`upload` 或 `download`（仅在启用 `--custom_device_vs_gpu` 时有效）           |
-| `--bos_path`                     | str   | BOS 存储路径（如 `xly-devops/liujingzong/`）                                           |
-| `--bos_conf_path`                | str   | BOS 配置文件路径（默认 `./conf`）                                                      |
-| `--bcecmd_path`                  | str   | bcecmd 命令行工具路径（默认 `./bcecmd`）                                               |
-| `--target_device_type`           | str   | 目标设备类型（如 `xpu`），仅在 `operation_mode=download` 时使用                        |
+| `--custom_device_vs_gpu`        | str   | 运行自定义设备与GPU的精度对比测试：`upload` 或 `download`（默认 None）                  |
+| `--target_device_type`           | str   | 目标设备类型（如 `xpu`），仅在 `--custom_device_vs_gpu=download` 时使用                |
 | `--bitwise_alignment`            | bool  | 是否进行诸位对齐对比，开启后所有的api的精度对比都按照atol=0.0,rtol = 0.0的精度对比结果|
 
 
@@ -151,58 +147,64 @@ python engineV2.py --accuracy=True --api_config_file="tester/api_config/api_conf
    - 在当前设备上执行相同的 Paddle API 测试
    - 对比 Forward 输出和 Backward 梯度，验证与参考设备的精度一致性
 
+#### 配置文件设置
+
+首先，编辑 `tester/bos_config.yaml` 配置文件：
+
+```yaml
+# BOS 配置文件
+# 用于自定义设备与 GPU 精度对比测试的云存储配置
+
+# BOS 存储路径（如：xly-devops/liujingzong/）
+bos_path: "xly-devops/liujingzong/"
+
+# BOS 配置文件路径（bcecmd 使用的配置文件路径）
+bos_conf_path: "./conf"
+
+# bcecmd 命令行工具路径
+bcecmd_path: "./bcecmd"
+```
+
 #### 命令示例
 
 **场景 1：在 XPU 上执行测试并上传结果**
 ```bash
 # 在 XPU 设备上执行，生成 xpu-1210-xxx.pdtensor 文件并上传到 BOS
-python engineV2.py --custom_device_vs_gpu=True --operation_mode=upload \
-  --bos_path="xly-devops/liujingzong/" \
-  --bos_conf_path="./conf" \
-  --bcecmd_path="./bcecmd" \
+python engineV2.py --custom_device_vs_gpu=upload \
   --random_seed=1210 \
   --api_config_file="./test1.txt" \
-  --gpu_id=7
+  --gpu_ids=7
 ```
 
 **场景 2：在 GPU 上下载 XPU 的参考数据并进行精度对比**
 ```bash
 # 在 GPU 设备上执行，从 BOS 下载 XPU 的参考数据（xpu-1210-xxx.pdtensor）
 # 然后在 GPU 上运行相同的测试，对比结果验证精度一致性
-python engineV2.py --custom_device_vs_gpu=True --operation_mode=download \
+python engineV2.py --custom_device_vs_gpu=download \
   --target_device_type=xpu \
-  --bos_path="xly-devops/liujingzong/" \
-  --bos_conf_path="./conf" \
-  --bcecmd_path="./bcecmd" \
   --random_seed=1210 \
   --api_config_file="./test1.txt" \
-  --gpu_id=7
+  --gpu_ids=7
 ```
 
 **场景 3：在 GPU 上执行测试并上传结果**
 ```bash
 # 在 GPU 设备上执行，生成 gpu-1210-xxx.pdtensor 文件并上传到 BOS
-python engineV2.py --custom_device_vs_gpu=True --operation_mode=upload \
-  --bos_path="xly-devops/liujingzong/" \
-  --bos_conf_path="./conf" \
-  --bcecmd_path="./bcecmd" \
+python engineV2.py --custom_device_vs_gpu=upload \
   --random_seed=1210 \
   --api_config_file="./test1.txt" \
-  --gpu_id=7
+  --gpu_ids=7
 ```
 
 **场景 4：在 XPU 上下载 GPU 的参考数据并进行精度对比**
 ```bash
 # 在 XPU 设备上执行，从 BOS 下载 GPU 的参考数据（gpu-1210-xxx.pdtensor）
 # 然后在 XPU 上运行相同的测试，对比结果验证精度一致性
-python engineV2.py --custom_device_vs_gpu=True --operation_mode=download \
+python engineV2.py --custom_device_vs_gpu=download \
   --target_device_type=gpu \
-  --bos_path="xly-devops/liujingzong/" \
-  --bos_conf_path="./conf" \
-  --bcecmd_path="./bcecmd" \
   --random_seed=1210 \
   --api_config_file="./test1.txt" \
-  --gpu_id=7
+  --gpu_ids=7
 ```
 
 ## 监控方法

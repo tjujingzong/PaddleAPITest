@@ -58,7 +58,7 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
         """保存结果到本地PDTensor文件"""
         # 保存到临时文件
         temp_dir = tempfile.gettempdir()
-        filename = self._get_filename().replace(".npz", ".pdtensor")
+        filename = self._get_filename()
         local_path = Path(temp_dir) / filename
 
         # 使用paddle.save保存张量数据
