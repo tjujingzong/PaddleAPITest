@@ -805,6 +805,32 @@ def main():
             )
         else:
             case = test_class(api_config, test_amp=options.test_amp)
+        # start pre-download pool when running single case in download mode
+        if options.custom_device_vs_gpu and options.operation_mode == "download":
+            try:
+                from tester.paddle_device_vs_gpu import start_pre_download_pool
+                import tempfile, os
+                tmp_file = None
+                try:
+                    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", suffix=".txt") as tf:
+                        tf.write(options.api_config.strip() + "\n")
+                        tmp_file = tf.name
+                    start_pre_download_pool(
+                        tmp_file,
+                        options.target_device_type,
+                        options.random_seed,
+                        options.bos_path,
+                        options.bcecmd_path,
+                        options.bos_conf_path,
+                    )
+                finally:
+                    if tmp_file and os.path.exists(tmp_file):
+                        try:
+                            os.unlink(tmp_file)
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"[pre-download] Failed to start pre-download pool for single case: {e}", flush=True)
         try:
             case.test()
         except Exception as err:
@@ -840,6 +866,22 @@ def main():
                 print(f"No config file found: {options.api_config_file}", flush=True)
                 return
             config_files = [options.api_config_file]
+
+        # start pre-download pool (download mode of custom_device_vs_gpu)
+        if options.custom_device_vs_gpu and options.operation_mode == "download":
+            try:
+                from tester.paddle_device_vs_gpu import start_pre_download_pool
+                for cfg_file in config_files:
+                    start_pre_download_pool(
+                        cfg_file,
+                        options.target_device_type,
+                        options.random_seed,
+                        options.bos_path,
+                        options.bcecmd_path,
+                        options.bos_conf_path,
+                    )
+            except Exception as e:
+                print(f"[pre-download] Failed to start pre-download pool: {e}", flush=True)
 
         # when engineV2 was interrupted, resume from .tmp dir
         aggregate_logs()
