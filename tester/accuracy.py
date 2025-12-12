@@ -21,6 +21,7 @@ class APITestAccuracy(APITestBase):
         self.rtol = kwargs.get("rtol", 1e-2)
         self.test_tol = kwargs.get("test_tol", False)
         self.exit_on_error = kwargs.get("exit_on_error", False)
+        self.bitwise_alignment = kwargs.get("bitwise_alignment", False)
         if self.test_tol:
             torch.set_printoptions(profile="short")
         self.converter = get_converter()

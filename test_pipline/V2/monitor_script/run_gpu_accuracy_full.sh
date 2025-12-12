@@ -18,6 +18,7 @@ TEST_MODE_ARGS=(
 	--accuracy=True
     --atol=0.0
     --rtol=0.0
+    --bitwise_alignment=True
 	# --paddle_only=True
     # --paddle_cinn=True
 	# --test_amp=True
