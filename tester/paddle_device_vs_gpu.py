@@ -1,14 +1,162 @@
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 import paddle
 
+from .api_config import APIConfig
 from .api_config.log_writer import write_to_log
 from .paddle_device_vs_cpu import APITestCustomDeviceVSCPU
+
+# ========== 两阶段流水线配置参数 ==========
+# 预下载进程池大小
+PRE_DOWNLOAD_WORKERS = 4
+# GPU 计算进程池轮询等待时间（秒）
+POLL_INTERVAL = 1.0
+# 最大等待时间（秒），超过此时间仍未下载完成则报错
+MAX_WAIT_TIME = 3600
+# 本地 cache 目录
+CACHE_DIR = Path(tempfile.gettempdir()) / "paddle_device_vs_gpu_cache"
+# ==========================================
+
+
+# ========== 全局文件状态管理 ==========
+# 直接通过文件系统检查文件是否存在，无需复杂的共享状态
+
+
+def _get_local_cache_path(filename):
+    """获取本地 cache 路径"""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return CACHE_DIR / filename
+
+
+def _download_worker(args):
+    """预下载 worker 函数（在独立进程中运行）"""
+    filename, bos_path, bcecmd_path, bos_conf_path = args
+    
+    # 检查是否已下载
+    local_path = _get_local_cache_path(filename)
+    if local_path.exists():
+        # 使用文件系统标记（因为多进程间 Manager 可能不共享）
+        print(f"[pre-download] File already exists: {local_path}", flush=True)
+        return filename, True
+    
+    # 构建 BOS 路径
+    cleaned = bos_path.strip().lstrip("/").rstrip("/")
+    remote_path = f"bos:/{cleaned}/{filename}"
+    
+    # 执行下载
+    cmd = [
+        str(bcecmd_path),
+        "--conf-path",
+        bos_conf_path,
+        "bos",
+        "cp",
+        remote_path,
+        str(local_path),
+    ]
+    
+    try:
+        print(f"[pre-download] Downloading {filename}...", flush=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode == 0:
+            # 验证文件确实存在
+            if local_path.exists():
+                print(f"[pre-download] Successfully downloaded: {filename}", flush=True)
+                return filename, True
+            else:
+                print(f"[pre-download] Download command succeeded but file not found: {filename}", flush=True)
+                return filename, False
+        else:
+            print(
+                f"[pre-download] Failed to download {filename}, stderr: {result.stderr}",
+                flush=True,
+            )
+            return filename, False
+    except Exception as e:
+        print(f"[pre-download] Error downloading {filename}: {e}", flush=True)
+        return filename, False
+
+
+def start_pre_download_pool(api_config_file, target_device_type, random_seed, 
+                            bos_path, bcecmd_path, bos_conf_path):
+    """启动预下载进程池
+    
+    Args:
+        api_config_file: API 配置文件路径
+        target_device_type: 目标设备类型
+        random_seed: 随机种子
+        bos_path: BOS 路径
+        bcecmd_path: bcecmd 路径
+        bos_conf_path: bcecmd 配置文件路径
+    """
+    if not api_config_file or not os.path.exists(api_config_file):
+        print(f"[pre-download] No valid api_config_file provided, skip pre-download", flush=True)
+        return
+    
+    print(f"[pre-download] Starting pre-download pool with {PRE_DOWNLOAD_WORKERS} workers", flush=True)
+    
+    # 读取配置文件，计算所有需要的文件名
+    filenames = []
+    try:
+        with open(api_config_file, "r") as f:
+            config_lines = [line.strip() for line in f if line.strip()]
+        
+        for config_line in config_lines:
+            try:
+                api_config = APIConfig(config_line)
+                # 计算文件名（需要模拟 APITestPaddleDeviceVSGPU 的逻辑）
+                config_str = json.dumps(
+                    {
+                        "api_name": api_config.api_name,
+                        "args": [str(arg) for arg in api_config.args],
+                        "kwargs": {k: str(v) for k, v in api_config.kwargs.items()},
+                    },
+                    sort_keys=True,
+                )
+                config_hash = hashlib.md5(config_str.encode()).hexdigest()[:16]
+                filename = f"{target_device_type}-{random_seed}-{config_hash}.pdtensor"
+                filenames.append(filename)
+            except Exception as e:
+                print(f"[pre-download] Failed to parse config line: {config_line[:100]}, error: {e}", flush=True)
+                continue
+        
+        print(f"[pre-download] Found {len(filenames)} files to download", flush=True)
+        
+        # 准备下载任务参数
+        download_tasks = [
+            (filename, bos_path, bcecmd_path, bos_conf_path)
+            for filename in filenames
+        ]
+        
+        # 启动进程池执行下载
+        with ProcessPoolExecutor(max_workers=PRE_DOWNLOAD_WORKERS) as executor:
+            futures = {executor.submit(_download_worker, task): task[0] for task in download_tasks}
+            
+            completed = 0
+            failed = 0
+            for future in as_completed(futures):
+                filename = futures[future]
+                try:
+                    _, success = future.result()
+                    if success:
+                        completed += 1
+                    else:
+                        failed += 1
+                except Exception as e:
+                    print(f"[pre-download] Exception for {filename}: {e}", flush=True)
+                    failed += 1
+            
+            print(f"[pre-download] Pre-download completed: {completed} succeeded, {failed} failed", flush=True)
+    
+    except Exception as e:
+        print(f"[pre-download] Error in pre-download pool: {e}", flush=True)
 
 
 class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
@@ -58,8 +206,7 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
         """保存结果到本地PDTensor文件"""
         # 保存到临时文件
         temp_dir = tempfile.gettempdir()
-        filename = self._get_filename().replace(".npz", ".pdtensor")
-        local_path = Path(temp_dir) / filename
+        local_path = Path(temp_dir) / self._get_filename()
 
         # 使用paddle.save保存张量数据
         save_data = {"output": output}
@@ -368,23 +515,41 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
         )
 
     def _test_download_mode(self):
-        """Download模式：下载对比数据并验证"""
+        """Download模式：从本地 cache 查找文件并验证（不再主动下载）"""
         print(
             f"[download] Starting download mode for {self.api_config.config}",
             flush=True,
         )
 
-        # 确定要下载的文件名
+        # 确定要查找的文件名
         target_filename = self._get_filename(self.target_device_type)
-
-        # 下载文件
-        downloaded_file = self._download_from_bos(target_filename)
-        if downloaded_file is None:
+        
+        # 从本地 cache 目录查找文件
+        local_cache_path = _get_local_cache_path(target_filename)
+        
+        # 等待文件准备好（轮询等待）
+        start_time = time.time()
+        while not local_cache_path.exists():
+            elapsed = time.time() - start_time
+            if elapsed > MAX_WAIT_TIME:
+                print(
+                    f"[download] Timeout waiting for file {target_filename} after {MAX_WAIT_TIME}s",
+                    flush=True,
+                )
+                return
+            
+            # 直接检查文件是否存在（文件系统是进程间共享的）
+            
             print(
-                f"[download] Failed to download comparison data for {self.api_config.config}",
+                f"[download] Waiting for file {target_filename} (elapsed: {elapsed:.1f}s)...",
                 flush=True,
             )
-            return
+            time.sleep(POLL_INTERVAL)
+        
+        print(
+            f"[download] File ready: {local_cache_path}",
+            flush=True,
+        )
 
         # 在本地设备上执行测试
         local_device_type = self._get_local_device_type()
@@ -398,12 +563,25 @@ class APITestPaddleDeviceVSGPU(APITestCustomDeviceVSCPU):
             return
 
         # 与下载的结果进行对比
-        success = self._compare_with_downloaded(
-            local_output, local_grads, downloaded_file
-        )
-
-        # 清理下载的文件
-        downloaded_file.unlink(missing_ok=True)
+        try:
+            success = self._compare_with_downloaded(
+                local_output, local_grads, local_cache_path
+            )
+        finally:
+            # 精度比较完成后删除 cache 文件以节省空间
+            # 文件已经在 _compare_with_downloaded 中加载到内存，可以安全删除
+            try:
+                if local_cache_path.exists():
+                    local_cache_path.unlink(missing_ok=True)
+                    print(
+                        f"[download] Cleaned up cache file: {local_cache_path}",
+                        flush=True,
+                    )
+            except Exception as e:
+                print(
+                    f"[download] Failed to delete cache file {local_cache_path}: {e}",
+                    flush=True,
+                )
 
         print(
             f"[download] Download mode completed for {self.api_config.config}",
